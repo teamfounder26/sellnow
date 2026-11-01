@@ -1,0 +1,158 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------
+   SellNow design tokens — V2 "Premium Blue".
+   Primary #1F83D8 is reserved for actions, active navigation, AI highlights,
+   progress and focus. Depth comes from the supporting pastels, not more blue.
+   Components use semantic tokens only.
+------------------------------------------------------------------- */
+@theme {
+  --font-sans: var(--font-jakarta), "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* Surfaces */
+  --color-cream: #fffbf5;
+  --color-canvas: #f7f9fc;
+  --color-surface: #ffffff;
+  --color-ink: #171717;
+  /* #78818F from the brand sheet is 3.9:1 on white; this shade keeps the hue at 4.7:1 (WCAG AA). */
+  --color-muted: #687180;
+  --color-line: #e6eaf0;
+
+  /* Brand */
+  --color-primary: #1f83d8;
+  --color-primary-strong: #1264ac;
+  --color-primary-soft: #e9f5ff;
+  --color-sky: #bfe5ff;
+  --color-accent: #ff7a45;
+  --color-ai: #8b7cf6;
+  --color-ai-strong: #5b48d9;
+
+  /* Pastels */
+  --color-lavender: #f0eafe;
+  --color-peach: #fff0e5;
+  --color-pink: #ffe9ec;
+  --color-mint: #e8f8f0;
+
+  /* Semantic */
+  --color-success: #15803d;
+  --color-success-soft: #e8f8f0;
+  --color-danger: #c62828;
+  --color-danger-soft: #ffe9ec;
+  --color-warning: #a35200;
+  --color-warning-soft: #fff0e5;
+
+  --radius-card: 1.25rem;
+  --radius-pill: 999px;
+  --shadow-soft: 0 1px 2px rgb(16 42 74 / 0.04), 0 8px 24px -12px rgb(16 42 74 / 0.14);
+  --shadow-lift: 0 2px 4px rgb(16 42 74 / 0.05), 0 22px 44px -20px rgb(16 42 74 / 0.28);
+  --shadow-glow: 0 0 0 1px rgb(31 131 216 / 0.12), 0 10px 30px -10px rgb(31 131 216 / 0.45);
+
+  --animate-pulse-soft: pulse-soft 2.4s ease-in-out infinite;
+  --animate-rise: rise 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-spin-slow: spin 14s linear infinite;
+  --animate-pop: pop 0.7s cubic-bezier(0.2, 1.4, 0.3, 1) both;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.04); }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes shimmer {
+  from { background-position: -400px 0; }
+  to { background-position: 400px 0; }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes pop {
+  0% { opacity: 0; transform: scale(0.4) rotate(-12deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0); }
+}
+@keyframes confetti-fall {
+  0% { transform: translate3d(0, -10vh, 0) rotate(0deg); opacity: 1; }
+  100% { transform: translate3d(var(--dx), 105vh, 0) rotate(720deg); opacity: 0.9; }
+}
+@keyframes ribbon {
+  0% { transform: translate(-50%, -50%) rotate(var(--rot)) scaleX(0); opacity: 0; }
+  30% { opacity: 1; }
+  100% { transform: translate(-50%, -50%) rotate(var(--rot)) scaleX(1) translateX(var(--len)); opacity: 0; }
+}
+@keyframes sparkle {
+  0%, 100% { transform: scale(0); opacity: 0; }
+  50% { transform: scale(1); opacity: 1; }
+}
+
+html { -webkit-text-size-adjust: 100%; }
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Atmospheric top gradient: warm cream (left) → sky (middle) → lavender (right), fading to neutral by ~45% height. */
+.ambient {
+  background:
+    radial-gradient(60% 38% at 4% 0%, rgb(255 240 222 / 0.95) 0%, transparent 70%),
+    radial-gradient(55% 42% at 48% -6%, rgb(191 229 255 / 0.85) 0%, transparent 72%),
+    radial-gradient(48% 40% at 100% 0%, rgb(232 222 254 / 0.9) 0%, transparent 70%),
+    linear-gradient(180deg, transparent 0%, var(--color-canvas) 46%);
+  background-color: var(--color-canvas);
+  background-repeat: no-repeat;
+}
+
+/* Subtle glass: translucent white, soft blur, delicate border, inner highlight. Text stays on near-opaque layers. */
+.glass {
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.78), rgb(255 255 255 / 0.62));
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  border: 1px solid rgb(255 255 255 / 0.85);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.9), 0 1px 2px rgb(16 42 74 / 0.04), 0 12px 32px -18px rgb(16 42 74 / 0.22);
+}
+.glass-strong {
+  background: rgb(255 255 255 / 0.9);
+  backdrop-filter: blur(20px) saturate(1.3);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  border: 1px solid rgb(230 234 240 / 0.9);
+}
+.glass-icon {
+  background: linear-gradient(160deg, rgb(255 255 255 / 0.95), rgb(233 245 255 / 0.7));
+  border: 1px solid rgb(255 255 255 / 0.9);
+  box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgb(16 42 74 / 0.06), 0 6px 14px -8px rgb(31 131 216 / 0.35);
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #eef2f7 0px, #f8fafc 120px, #eef2f7 240px);
+  background-size: 800px 100%;
+  animation: var(--animate-shimmer);
+  border-radius: 0.75rem;
+}
+
+.ai-glow {
+  background: radial-gradient(120% 120% at 0% 0%, var(--color-lavender) 0%, transparent 55%),
+    radial-gradient(120% 120% at 100% 100%, var(--color-primary-soft) 0%, transparent 55%), var(--color-surface);
+}
+
+.text-gradient {
+  background: linear-gradient(100deg, var(--color-primary-strong), var(--color-primary) 45%, var(--color-ai) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

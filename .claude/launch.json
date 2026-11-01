@@ -1,0 +1,31 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sellnow",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "next",
+        "dev",
+        "-p",
+        "3100"
+      ],
+      "port": 3100
+    },
+    {
+      "name": "sellnow-verify",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "NEXT_DIST_DIR=.next-verify",
+        "PGLITE_DIR=./.data/pglite-verify",
+        "APP_URL=http://localhost:3101",
+        "npx",
+        "next",
+        "dev",
+        "-p",
+        "3101"
+      ],
+      "port": 3101
+    }
+  ]
+}
