@@ -26,6 +26,8 @@ export type JobDefinition = {
   stages: { key: string; validating?: boolean; run: (c: StageContext) => Promise<unknown> }[];
   onComplete?: (c: StageContext) => Promise<void>;
   onFail?: (c: StageContext, code: string) => Promise<void>;
+  /** Lease per stage; must exceed the slowest stage so a status poll never starts a duplicate worker. */
+  leaseSeconds?: number;
 };
 
 const registry = new Map<string, JobDefinition>();
@@ -120,7 +122,7 @@ export async function runJob(db: DB, jobId: string): Promise<Job | null> {
       stage: stage.key,
       stages,
       status: stage.validating ? "VALIDATING" : "PROCESSING",
-      leaseUntil: sql`now() + interval '${sql.raw(String(LEASE_SECONDS))} seconds'` as unknown as Date,
+      leaseUntil: sql`now() + interval '${sql.raw(String(def.leaseSeconds ?? LEASE_SECONDS))} seconds'` as unknown as Date,
     });
     try {
       const out = await stage.run(ctx());

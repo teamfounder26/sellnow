@@ -78,6 +78,20 @@ export async function storeBytes(
   return { id };
 }
 
+/** Stores generated or rendered poster images (public, like product photos; ids are unguessable). */
+export async function storeImageBytes(db: DB, opts: { workspaceId: string; buf: Buffer; originalName: string; limit?: number }) {
+  if (opts.buf.length > (opts.limit ?? IMAGE_LIMIT)) throw new AppError("upload.tooLarge", { mb: Math.round((opts.limit ?? IMAGE_LIMIT) / 1024 / 1024) });
+  const mime = detectImageMime(opts.buf);
+  if (!mime) throw new AppError("upload.badType");
+  const id = newId("ast");
+  const storageKey = `public/${opts.workspaceId}/${id}`;
+  const full = path.join(ROOT(), storageKey);
+  await mkdir(path.dirname(full), { recursive: true });
+  await writeFile(full, opts.buf);
+  await db.insert(assets).values({ id, workspaceId: opts.workspaceId, kind: "image", storageKey, mime, size: opts.buf.length, originalName: opts.originalName.slice(0, 120), visibility: "public" });
+  return { id, mime };
+}
+
 export async function storeAsset(
   db: DB,
   opts: { workspaceId: string; file: File; kind: "image" | "digital_file" },

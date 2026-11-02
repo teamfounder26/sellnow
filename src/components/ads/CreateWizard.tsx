@@ -303,7 +303,15 @@ export function CreateWizard(props: {
               )}
               <div className="mt-5 rounded-2xl bg-canvas p-4 text-sm">
                 <p className="flex items-center gap-1.5 font-bold"><ImageIcon className="size-4 text-primary" /> {t("ads.wizard.imageTitle")}</p>
-                <p className="mt-1 text-muted">{props.imageProvider ? t("ads.wizard.imageAvailable") : product.imageAssetId ? t("ads.wizard.imageUsesProduct") : t("ads.wizard.imageNone")}</p>
+                {d?.creative?.imageAssetId ? (
+                  <div className="mt-2 flex items-center gap-3">
+                    <img src={`/api/assets/${d.creative.imageAssetId}`} alt="" className="h-20 rounded-lg bg-white ring-1 ring-line" />
+                    <p className="text-muted">{t("ads.wizard.posterImage")}</p>
+                  </div>
+                ) : (
+                  <p className="mt-1 text-muted">{product.imageAssetId ? t("ads.wizard.imageUsesProduct") : t("ads.wizard.imageNone")}</p>
+                )}
+                <a href="/dashboard/creative?tab=posters" className="mt-2 inline-block font-semibold text-primary hover:underline">{t("ads.wizard.openPosterStudio")}</a>
               </div>
             </>
           )}

@@ -29,7 +29,7 @@ export async function availableObjectives(db: DB, workspaceId: string, p: Produc
 }
 
 /** Confirmed facts only — the AI may not add benefits that aren't here. */
-async function factSheet(db: DB, workspaceId: string, p: Product) {
+export async function factSheet(db: DB, workspaceId: string, p: Product) {
   const profile = await db.query.businessProfiles.findFirst({ where: eq(businessProfiles.workspaceId, workspaceId) });
   const facts = Object.entries(profile?.fields ?? {})
     .filter(([, f]) => (f.status === "confirmed" || f.status === "user") && f.value != null && f.value !== "")
@@ -118,7 +118,7 @@ const APPROACH_GUIDE: Record<Approach, string> = {
 };
 
 /** Verified testimonials only (seller-confirmed on the storefront). */
-async function confirmedTestimonials(db: DB, workspaceId: string) {
+export async function confirmedTestimonials(db: DB, workspaceId: string) {
   const sf = await db.query.storefronts.findFirst({ where: eq(storefronts.workspaceId, workspaceId) });
   const s = sf?.draftContent.sections.find((x) => x.type === "social_proof");
   return s && s.props.confirmed ? ((s.props.testimonials as { quote: string; author: string }[]) ?? []) : [];

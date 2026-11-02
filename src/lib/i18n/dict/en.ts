@@ -2,6 +2,7 @@ import type { msV1 } from "./ms";
 import { mergeDict } from "../merge";
 import { enV2 } from "./v2.en";
 import { adsEn } from "./ads.en";
+import { posterEn } from "./poster.en";
 
 type Shape<T> = { [K in keyof T]: T[K] extends string ? string : Shape<T[K]> };
 
@@ -924,4 +925,4 @@ const v1: Shape<typeof msV1> = {
   },
 };
 
-export const en = mergeDict(mergeDict(v1, enV2), adsEn);
+export const en = mergeDict(mergeDict(mergeDict(v1, enV2), adsEn), posterEn);

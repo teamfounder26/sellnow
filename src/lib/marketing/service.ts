@@ -1,6 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { unlock } from "@/lib/achievements/service";
 import { z } from "zod";
+import { imageGenerationConfigured } from "@/lib/ai/image";
 import type { DB } from "@/lib/db";
 import { creatives, campaigns, products, businessProfiles, integrations } from "@/lib/db/schema";
 import { newId } from "@/lib/ids";
@@ -20,7 +21,7 @@ export const OBJECTIVES = ["awareness", "benefits", "problem_solution", "offer",
 export const RATIOS = ["1:1", "4:5", "9:16", "16:9"] as const;
 
 export function imageProviderConfigured() {
-  return false; // No image-generation provider adapter is configured in this build.
+  return imageGenerationConfigured(); // OpenAI-compatible image adapter (IMAGE_API_KEY) — see lib/ai/image.ts.
 }
 
 export const creativeRequestSchema = z.object({

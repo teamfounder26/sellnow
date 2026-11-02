@@ -1046,3 +1046,168 @@ export const analyticsEvents = pgTable(
   },
   (t) => [index("analytics_ws_name_idx").on(t.workspaceId, t.name, t.createdAt)],
 );
+
+// ---------------------------------------------------------------- AI Poster Studio
+export type PosterTheme = "educate" | "features" | "usp" | "testimonial";
+export type PosterAngle = "problem_solution" | "curiosity" | "mirror" | "benefits" | "educational" | "offer" | "direct";
+export type PosterStyle = "fluent_3d" | "flat" | "chibi" | "cartoon_3d" | "photo" | "editorial";
+export type PosterRatio = "3:4" | "4:5" | "1:1" | "9:16";
+export type PosterObjective = "awareness" | "traffic" | "leads" | "sales" | "engagement";
+/** Where a value came from: product/profile/storefront records and the seller are verified; "ai" is an assumption to review. */
+export type PosterSource = "product" | "profile" | "storefront" | "user" | "ai";
+export type PosterSettings = {
+  objective: "auto" | PosterObjective;
+  theme: "auto" | PosterTheme;
+  angle: "auto" | PosterAngle;
+  style: "auto" | PosterStyle;
+  ratio: PosterRatio;
+  language: "ms" | "en" | "mixed";
+  variations: 1 | 3 | 5;
+  advanced: {
+    audience?: string;
+    problem?: string;
+    motivation?: string;
+    awareness?: "unaware" | "problem" | "solution" | "product" | "most";
+    keyMessage?: string;
+    offer?: string;
+    showPrice?: boolean;
+    proofPoints?: string;
+    customCta?: string;
+    logoAssetId?: string | null;
+    brandColors?: string[];
+    fontPreference?: string;
+    referenceAssetIds?: string[];
+    restrictions?: string;
+    layout?: string;
+    textDensity?: "light" | "balanced" | "rich";
+    background?: string;
+    /** Seller-pasted testimonial; usable only with the permission confirmation. */
+    testimonial?: { quote: string; author: string; permission: boolean } | null;
+  };
+};
+export type PosterFact = { label: string; value: string; source: PosterSource };
+export type PosterIntel = {
+  facts: PosterFact[];
+  what: string;
+  who: string;
+  problem: string;
+  solution: string;
+  benefits: string[];
+  usp: string;
+  evidence: string[];
+  /** Statements the AI inferred (not in the seller's records) — shown as assumptions. */
+  assumptions: string[];
+  questions: string[];
+};
+export type PosterCopy = { headline: string; body: string[]; cta: string };
+export type PosterConcept = {
+  theme: PosterTheme;
+  angle: PosterAngle;
+  keyMessage: string;
+  copy: PosterCopy;
+  visual: { style: PosterStyle; hero: string; supporting: string[]; layout: string; colors: string[] };
+  /** Index into brief.evidence.testimonials for testimonial posters (quote is never AI-written). */
+  testimonialIndex?: number | null;
+};
+export type PosterBrief = {
+  product: { name: string; priceSen: number; mainBenefit: string };
+  audience: { customer: string; problem: string; motivation: string };
+  strategy: { objective: PosterObjective; recommendation: string };
+  concepts: PosterConcept[];
+  evidence: { facts: string[]; claims: string[]; testimonials: { quote: string; author: string }[] };
+  /** Field path → origin, for the "auto-generated vs confirmed" markers. */
+  sources: Record<string, PosterSource>;
+};
+
+/** One poster brief → approval → prompts/images run. Brief edits after approval require re-approval. */
+export const posterProjects = pgTable(
+  "poster_projects",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    productId: text("product_id").references(() => products.id, { onDelete: "set null" }),
+    status: text("status").$type<"brief" | "approved">().notNull().default("brief"),
+    settings: jsonb("settings").$type<PosterSettings>().notNull(),
+    intel: jsonb("intel").$type<PosterIntel>().notNull(),
+    brief: jsonb("brief").$type<PosterBrief>().notNull(),
+    briefBy: text("brief_by").$type<"ai" | "rules">().notNull(),
+    generationId: text("generation_id").references(() => aiGenerations.id),
+    approvedAt: ts("approved_at"),
+    approvedBy: text("approved_by").references(() => users.id),
+    createdBy: text("created_by").references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("poster_projects_ws_idx").on(t.workspaceId, t.createdAt)],
+);
+
+/** One poster variation. Creative generation never touches Meta ad slots — only a published ad does. */
+export const posters = pgTable(
+  "posters",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => posterProjects.id, { onDelete: "cascade" }),
+    productId: text("product_id").references(() => products.id, { onDelete: "set null" }),
+    idx: integer("idx").notNull(),
+    theme: text("theme").$type<PosterTheme>().notNull(),
+    angle: text("angle").$type<PosterAngle>().notNull(),
+    style: text("style").$type<PosterStyle>().notNull(),
+    ratio: text("ratio").$type<PosterRatio>().notNull(),
+    status: text("status").$type<"draft" | "approved" | "published">().notNull().default("draft"),
+    copy: jsonb("copy").$type<PosterCopy>().notNull(),
+    /** Full image prompt including the exact approved text (for external tools). */
+    prompt: text("prompt").notNull(),
+    /** Artwork-only prompt (no lettering) used with SellNow's exact-text overlay. */
+    artPrompt: text("art_prompt").notNull(),
+    promptEdited: boolean("prompt_edited").notNull().default(false),
+    currentVersionId: text("current_version_id"),
+    adId: text("ad_id").references(() => ads.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("posters_ws_idx").on(t.workspaceId, t.createdAt), index("posters_project_idx").on(t.projectId)],
+);
+
+/** Immutable render history: every regenerate or text edit adds a version; earlier ones are kept. */
+export const posterVersions = pgTable(
+  "poster_versions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    posterId: text("poster_id")
+      .notNull()
+      .references(() => posters.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    /** ai_image: provider artwork; layout: seller's product photo composition (no AI image). */
+    kind: text("kind").$type<"ai_image" | "layout">().notNull(),
+    textMode: text("text_mode").$type<"overlay" | "in_image">().notNull().default("overlay"),
+    status: text("status").$type<"generating" | "succeeded" | "failed">().notNull(),
+    artAssetId: text("art_asset_id").references(() => assets.id, { onDelete: "set null" }),
+    /** Final composed poster saved by the seller (used for Meta Ads and downloads). */
+    imageAssetId: text("image_asset_id").references(() => assets.id, { onDelete: "set null" }),
+    copy: jsonb("copy").$type<PosterCopy>().notNull(),
+    style: text("style").$type<PosterStyle>().notNull(),
+    ratio: text("ratio").$type<PosterRatio>().notNull(),
+    prompt: text("prompt"),
+    provider: text("provider"),
+    model: text("model"),
+    credits: integer("credits").notNull().default(0),
+    generationId: text("generation_id").references(() => aiGenerations.id),
+    error: text("error"),
+    /** Client idempotency key: a retried click returns the same version and is never charged twice. */
+    requestKey: text("request_key").notNull(),
+    createdBy: text("created_by").references(() => users.id),
+    createdAt: createdAt(),
+    completedAt: ts("completed_at"),
+  },
+  (t) => [uniqueIndex("poster_versions_uq").on(t.posterId, t.version), uniqueIndex("poster_versions_key_uq").on(t.workspaceId, t.requestKey), index("poster_versions_poster_idx").on(t.posterId)],
+);

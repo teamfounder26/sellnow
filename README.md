@@ -54,7 +54,7 @@ tests/                 critical-path tests (auth, tenancy, onboarding, checkout,
 
 ## Environment variables
 
-See `.env.example`. Production **requires** `DATABASE_URL`, `APP_ENCRYPTION_KEY` (32-byte base64), `APP_SIGNING_SECRET`, `APP_URL`. Optional: `ANTHROPIC_API_KEY`, `SELLNOW_AI_MODEL`, `CRON_SECRET`, `META_APP_ID`/`META_APP_SECRET` (Meta flow not yet built), `ALLOW_TEST_GATEWAY` (never in real production).
+See `.env.example`. Production **requires** `DATABASE_URL`, `APP_ENCRYPTION_KEY` (32-byte base64), `APP_SIGNING_SECRET`, `APP_URL`. Optional: `ANTHROPIC_API_KEY`, `SELLNOW_AI_MODEL`, `CRON_SECRET`, `META_APP_ID`/`META_APP_SECRET` (AI Ads Studio publishing), `IMAGE_API_KEY`/`IMAGE_BASE_URL`/`IMAGE_MODEL` (AI Poster Studio image generation — see `docs/POSTER_STUDIO_REPORT.md`), `ALLOW_TEST_GATEWAY` (never in real production).
 
 Merchant payment credentials (Stripe / Billplz) are entered per workspace in the app and stored AES-256-GCM encrypted.
 

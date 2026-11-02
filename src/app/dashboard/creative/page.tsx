@@ -24,14 +24,17 @@ import { CreateWizard } from "@/components/ads/CreateWizard";
 import { AdsSettings } from "@/components/ads/AdsSettings";
 import { SyncButton } from "@/components/ads/SyncButton";
 import { CreativeStudio } from "@/components/marketing/CreativeStudio";
+import { posterStudioData } from "@/lib/posters/view";
+import { PosterStudio } from "@/components/posters/PosterStudio";
+import { PosterLibrary } from "@/components/posters/PosterLibrary";
 
 export const metadata = { title: "AI Ads Studio" };
 
-const TABS = ["overview", "create", "ads", "performance", "settings"] as const;
+const TABS = ["overview", "create", "posters", "ads", "performance", "settings"] as const;
 type Tab = (typeof TABS)[number];
 const RANGES = ["today", "yesterday", "7d", "30d", "custom"] as const;
 
-export default async function AdsStudioPage({ searchParams }: { searchParams: Promise<{ tab?: string; ad?: string; range?: string; from?: string; to?: string; error?: string; connected?: string }> }) {
+export default async function AdsStudioPage({ searchParams }: { searchParams: Promise<{ tab?: string; ad?: string; range?: string; from?: string; to?: string; error?: string; connected?: string; project?: string; product?: string; theme?: string; status?: string }> }) {
   const sp = await searchParams;
   const tab: Tab = (TABS as readonly string[]).includes(sp.tab ?? "") ? (sp.tab as Tab) : "overview";
   const { db, workspace, role } = await requireWorkspace("viewer");
@@ -297,6 +300,20 @@ export default async function AdsStudioPage({ searchParams }: { searchParams: Pr
             </dl>
             <p className="mt-4 flex items-start gap-2 rounded-2xl bg-primary-soft/60 p-4 text-sm"><Info className="mt-0.5 size-4 shrink-0 text-primary" /> {t("ads.howTo.attribution")}</p>
           </Card>
+        </div>
+      </>
+    );
+  }
+
+  // ------------------------------------------------------------ AI Poster Studio
+  if (tab === "posters") {
+    const d = await posterStudioData(db, workspace.id, locale, { project: sp.project, product: sp.product, theme: sp.theme, status: sp.status });
+    return (
+      <>
+        {header}
+        <div className="space-y-10">
+          <PosterStudio key={d.project?.id ?? "new"} env={{ ...d.env, canEdit }} products={d.products} project={d.project} activeJob={d.activeJob} />
+          {d.hasAny && <PosterLibrary rows={d.library} products={d.products.map((p) => ({ id: p.id, name: p.name }))} filters={{ product: sp.product, theme: sp.theme, status: sp.status }} canEdit={canEdit} locale={locale} />}
         </div>
       </>
     );

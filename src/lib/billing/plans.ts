@@ -85,6 +85,8 @@ export const CREDIT_COSTS = {
   "onboarding.profileGen": 3,
   "ads.strategy": 2,
   "ads.creative": 3,
+  "poster.brief": 2,
+  "poster.image": 4,
 } as const;
 
 export type AITask = keyof typeof CREDIT_COSTS;

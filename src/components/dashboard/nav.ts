@@ -62,6 +62,7 @@ export const NAV: NavSection[] = [
     items: [
       { key: "adsOverview", href: "/dashboard/creative" },
       { key: "adsCreate", href: "/dashboard/creative?tab=create" },
+      { key: "adsPosters", href: "/dashboard/creative?tab=posters" },
       { key: "adsMine", href: "/dashboard/creative?tab=ads" },
       { key: "adsPerformance", href: "/dashboard/creative?tab=performance" },
       { key: "adsSettings", href: "/dashboard/creative?tab=settings" },

@@ -81,7 +81,10 @@ export async function generateAdCopyAction(adId: string, approach: string): Prom
 export async function chooseCreativeAction(adId: string, creative: AdCreative, creativeId: string | null): Promise<ActionResult> {
   try {
     const c = await ctx();
-    await svc.updateDraft(c, adId, { creative, step: "review" });
+    // Keep a Poster Studio image when the seller picks different copy (copy variants carry no image).
+    const prev = (await svc.getAd(c.db, c.workspaceId, adId)).creative;
+    const image = { imageAssetId: creative.imageAssetId ?? prev?.imageAssetId ?? null, ratio: creative.ratio ?? prev?.ratio ?? null };
+    await svc.updateDraft(c, adId, { creative: { ...creative, ...image }, step: "review" });
     if (creativeId) {
       const owned = await c.db.query.creatives.findFirst({ where: and(eq(creatives.id, creativeId), eq(creatives.workspaceId, c.workspaceId)) });
       if (owned) {
