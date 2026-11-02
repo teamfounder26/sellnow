@@ -82,6 +82,18 @@ export function Select({ className, ...props }: ComponentProps<"select">) {
 }
 
 export function Field({ label, hint, error, required, children, htmlFor }: { label: ReactNode; hint?: ReactNode; error?: ReactNode; required?: boolean; children: ReactNode; htmlFor?: string }) {
+  // Without an explicit id the label wraps the control, so the input still gets an accessible name.
+  if (!htmlFor)
+    return (
+      <label className="flex flex-col gap-1.5">
+        <span className="text-sm font-semibold">
+          {label}
+          {required ? <span className="text-accent"> *</span> : null}
+        </span>
+        {children}
+        {error ? <span className="text-sm text-danger">{error}</span> : hint ? <span className="text-[13px] text-muted">{hint}</span> : null}
+      </label>
+    );
   return (
     <div className="flex flex-col gap-1.5">
       <label htmlFor={htmlFor} className="text-sm font-semibold">

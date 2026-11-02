@@ -2,6 +2,7 @@ import { mergeDict } from "../merge";
 import { msV2 } from "./v2.ms";
 import { adsMs } from "./ads.ms";
 import { posterMs } from "./poster.ms";
+import { v3Ms } from "./v3.ms";
 
 export const msV1 = {
   common: {
@@ -922,4 +923,4 @@ export const msV1 = {
   },
 };
 
-export const ms = mergeDict(mergeDict(mergeDict(msV1, msV2), adsMs), posterMs);
+export const ms = mergeDict(mergeDict(mergeDict(mergeDict(msV1, msV2), adsMs), posterMs), v3Ms);

@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { requireWorkspace } from "@/lib/auth/session";
+import { sellerEarnings } from "@/lib/finance/settlement";
+import { selltroReady } from "@/lib/finance/selltro-pay";
+import { EarningsPanel } from "@/components/commerce/EarningsPanel";
 import { getT } from "@/lib/i18n/server";
 import { getKpis, rangeFromDays } from "@/lib/analytics/kpis";
 import { orders } from "@/lib/db/schema";
@@ -12,7 +15,8 @@ export const metadata = { title: "Finances" };
 
 /** Revenue and payment transactions from verified payment records. Fees/payouts live in the merchant's own gateway account. */
 export default async function FinancesPage() {
-  const { db, workspace } = await requireWorkspace("viewer");
+  const { db, workspace, role } = await requireWorkspace("viewer");
+  const [earnings, selltroOn] = await Promise.all([sellerEarnings(db, workspace.id), selltroReady(db, workspace.id)]);
   const { t, locale } = await getT();
   const [k30, k365, payment, txns] = await Promise.all([
     getKpis(db, workspace.id, rangeFromDays(30)),
@@ -64,6 +68,7 @@ export default async function FinancesPage() {
           </ul>
         )}
       </Card>
+      <EarningsPanel t={t} locale={locale} d={earnings} active={selltroOn} canStatement={role === "owner" || role === "admin"} />
     </div>
   );
 }

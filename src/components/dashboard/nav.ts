@@ -86,12 +86,16 @@ export const NAV: NavSection[] = [
     match: ["/dashboard/orders"],
     items: [
       { key: "allOrders", href: "/dashboard/orders" },
-      { key: "pendingOrders", href: "/dashboard/orders?status=PENDING" },
-      { key: "paidOrders", href: "/dashboard/orders?status=PAID" },
-      { key: "refunds", href: "/dashboard/orders?status=REFUNDED" },
+      { key: "ordersNew", href: "/dashboard/orders?tab=new" },
+      { key: "ordersReady", href: "/dashboard/orders?tab=ready" },
+      { key: "ordersPending", href: "/dashboard/orders?tab=pending_payment" },
+      { key: "ordersShipped", href: "/dashboard/orders?tab=shipped" },
+      { key: "ordersDelivered", href: "/dashboard/orders?tab=delivered" },
+      { key: "ordersCod", href: "/dashboard/orders?tab=cod" },
+      { key: "ordersReturns", href: "/dashboard/orders?tab=returns" },
     ],
   },
-  { key: "finances", href: "/dashboard/finances", icon: Wallet, match: ["/dashboard/finances"], items: [{ key: "revenue", href: "/dashboard/finances" }] },
+  { key: "finances", href: "/dashboard/finances", icon: Wallet, match: ["/dashboard/finances"], items: [{ key: "revenue", href: "/dashboard/finances" }, { key: "earnings", href: "/dashboard/finances#earnings" }] },
   { key: "analytics", href: "/dashboard/analytics", icon: BarChart3, match: ["/dashboard/analytics"], items: [{ key: "businessOverview", href: "/dashboard/analytics" }] },
   {
     key: "integrations",
@@ -100,7 +104,8 @@ export const NAV: NavSection[] = [
     match: ["/dashboard/integrations"],
     items: [
       { key: "allIntegrations", href: "/dashboard/integrations" },
-      { key: "paymentGateway", href: "/dashboard/settings?tab=payments" },
+      { key: "selltroPay", href: "/dashboard/settings?tab=payments" },
+      { key: "couriers", href: "/dashboard/integrations#couriers" },
     ],
   },
   {
@@ -111,7 +116,9 @@ export const NAV: NavSection[] = [
     items: [
       { key: "profile", href: "/dashboard/settings?tab=profile" },
       { key: "business", href: "/dashboard/settings?tab=workspace" },
-      { key: "payments", href: "/dashboard/settings?tab=payments" },
+      { key: "selltroPay", href: "/dashboard/settings?tab=payments" },
+      { key: "paymentMethods", href: "/dashboard/settings?tab=orders" },
+      { key: "shippingRates", href: "/dashboard/settings?tab=shipping" },
       { key: "billing", href: "/dashboard/settings?tab=billing" },
       { key: "ai", href: "/dashboard/settings?tab=ai" },
       { key: "discounts", href: "/dashboard/settings?tab=discounts" },

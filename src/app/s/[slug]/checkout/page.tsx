@@ -5,6 +5,8 @@ import { ArrowLeft } from "lucide-react";
 import { getDb } from "@/lib/db";
 import { getPublicStorefront } from "@/lib/storefront/service";
 import { productVariants, products } from "@/lib/db/schema";
+import { checkoutPaymentOptions } from "@/lib/commerce/checkout";
+import { selltroEnvironment } from "@/lib/finance/selltro-pay";
 import { getPaymentIntegration } from "@/lib/payments/integrations";
 import { ENGINES } from "@/lib/categories";
 import { getT } from "@/lib/i18n/server";
@@ -52,6 +54,8 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
   const bumpId = pub.version.content.orderBumpProductId;
   const bump = bumpId && bumpId !== product.id ? await db.query.products.findFirst({ where: and(eq(products.id, bumpId), eq(products.workspaceId, pub.storefront.workspaceId), eq(products.status, "active")) }) : null;
   const integration = await getPaymentIntegration(db, pub.storefront.workspaceId);
+  const options = await checkoutPaymentOptions(db, pub.storefront.workspaceId);
+  const selltroEnv = selltroEnvironment();
   const theme = pub.version.theme;
   const pixelId = await storefrontPixelId(db, pub.storefront.workspaceId);
 
@@ -67,7 +71,8 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
           slug={slug}
           accent={theme.primary}
           cancelled={Boolean(cancelled)}
-          provider={integration ? { name: integration.provider === "test" ? "SellNow Test Gateway" : integration.provider === "stripe" ? "Stripe" : "Billplz", isTest: integration.provider === "test" || integration.mode === "test" } : null}
+          provider={options.selltro ? { name: "Selltro Pay", isTest: selltroEnv !== "live" } : integration ? { name: integration.provider === "test" ? "SellNow Test Gateway" : integration.provider === "stripe" ? "Stripe" : "Billplz", isTest: integration.provider === "test" || integration.mode === "test" } : null}
+          methods={{ online: options.online, cod: { enabled: options.cod.enabled, feeSen: options.cod.feeSen }, manual: { enabled: options.manual.enabled } }}
           product={{ id: product.id, name: product.name, type: product.type, priceSen: product.priceSen, imageAssetId: product.imageAssetId, fulfillment: product.attributes.fulfillment ?? null, trackStock: product.trackStock, stock: product.stock }}
           variants={variants.map((v) => ({ id: v.id, name: v.name, priceSen: v.priceSen, stock: v.stock }))}
           bump={bump && ENGINES[bump.type].checkout === "full" ? { id: bump.id, name: bump.name, priceSen: bump.priceSen, type: bump.type } : null}

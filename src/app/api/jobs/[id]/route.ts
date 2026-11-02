@@ -14,7 +14,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (!job) return NextResponse.json({ error: "errors.notFound" }, { status: 404 });
   if (needsKick(job)) kickJob(job.id);
   return NextResponse.json(
-    { id: job.id, kind: job.kind, status: job.status, stage: job.stage, stages: job.stages, error: job.error, completedAt: job.completedAt },
+    // Bulk courier results are per-order outcomes (no secrets) — the UI shows them after the run.
+    { id: job.id, kind: job.kind, status: job.status, stage: job.stage, stages: job.stages, error: job.error, completedAt: job.completedAt, ...(job.kind === "courier.bulkPush" ? { output: job.output } : {}) },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

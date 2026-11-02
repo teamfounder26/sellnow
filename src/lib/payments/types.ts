@@ -1,4 +1,4 @@
-export type PaymentProvider = "stripe" | "billplz" | "test";
+export type PaymentProvider = "stripe" | "billplz" | "test" | "selltro_pay";
 
 export type CreatePaymentInput = {
   orderId: string;

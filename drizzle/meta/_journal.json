@@ -29,6 +29,13 @@
       "when": 1793604457180,
       "tag": "0003_poster_studio",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793606382444,
+      "tag": "0004_v3_commerce",
+      "breakpoints": true
     }
   ]
 }

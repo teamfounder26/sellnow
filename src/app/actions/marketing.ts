@@ -1,4 +1,5 @@
 "use server";
+import { entitlementsFor } from "@/lib/admin/packages";
 import { revalidatePath } from "next/cache";
 import { ZodError } from "zod";
 import { requireWorkspace } from "@/lib/auth/session";
@@ -59,7 +60,7 @@ export async function approveCampaignAction(id: string): Promise<ActionResult> {
 export async function publishCampaignAction(id: string): Promise<ActionResult> {
   try {
     const { db, workspace, user } = await requireWorkspace("admin");
-    if (!getPlan(workspace.plan).entitlements.marketing) return { ok: false, error: "marketing.lockedPlan" };
+    if (!(await entitlementsFor(db, workspace.id)).marketing) return { ok: false, error: "marketing.lockedPlan" };
     await m.publishCampaign(db, { workspaceId: workspace.id, userId: user.id }, id);
     revalidatePath("/dashboard/marketing");
     return { ok: true, data: undefined };

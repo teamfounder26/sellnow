@@ -13,11 +13,17 @@ import { renameWorkspaceAction } from "@/app/actions/workspace";
 import { formatMYR } from "@/lib/money";
 import { Badge, Button, Card, Field, Input, Notice, SectionHeader } from "@/components/ui";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
-import { PaymentSettings } from "@/components/settings/PaymentSettings";
+import { SelltroPaySettings } from "@/components/commerce/SelltroPaySettings";
+import { OrderPaymentSettings } from "@/components/commerce/OrderPaymentSettings";
+import { ShippingSettings } from "@/components/commerce/ShippingSettings";
+import { bankHistory, getSellerAccount, selltroEnvironment, selltroReady } from "@/lib/finance/selltro-pay";
+import { getOrderSettings } from "@/lib/orders/settings";
+import { exportRulesCsv, listRules, listZones } from "@/lib/shipping/rules";
+import { getShipper } from "@/lib/couriers/service";
 import { DiscountSettings } from "@/components/settings/DiscountSettings";
 import { appUrl } from "@/lib/http";
 
-const TABS = ["profile", "workspace", "payments", "billing", "ai", "discounts"] as const;
+const TABS = ["profile", "workspace", "payments", "orders", "shipping", "billing", "ai", "discounts"] as const;
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const { tab: raw } = await searchParams;
@@ -32,7 +38,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       <div className="mb-6 flex gap-2 overflow-x-auto pb-1">
         {TABS.map((k) => (
           <Link key={k} href={`/dashboard/settings?tab=${k}`} className={`whitespace-nowrap rounded-pill px-4 py-1.5 text-sm font-semibold ${tab === k ? "bg-primary text-white" : "border border-line bg-surface text-muted"}`}>
-            {k === "ai" ? t("aiSettings.tab") : t(`settings.${k}`)}
+            {k === "ai" ? t("aiSettings.tab") : k === "payments" ? t("selltro.title") : t(`settings.${k}`)}
           </Link>
         ))}
       </div>
@@ -99,14 +105,28 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         </div>
       )}
 
-      {tab === "payments" && (
-        <PaymentSettings
-          canEdit={role === "owner"}
-          integrations={(await listIntegrations(db, workspace.id)).filter((i) => i.kind === "payment").map((i) => ({ id: i.id, provider: i.provider, mode: i.mode, status: i.status }))}
-          testAllowed={testGatewayAllowed()}
-          baseUrl={await appUrl()}
-        />
-      )}
+      {tab === "payments" && (async () => {
+        const acct = await getSellerAccount(db, workspace.id);
+        const legacy = (await listIntegrations(db, workspace.id)).find((i) => i.kind === "payment" && i.status === "connected");
+        const banks = await bankHistory(db, workspace.id);
+        return (
+          <SelltroPaySettings
+            canEdit={role === "owner"}
+            environment={selltroEnvironment()}
+            status={acct?.status ?? "NOT_ACTIVATED"}
+            reviewNote={acct?.reviewNote ?? null}
+            legacyProvider={legacy && acct?.status !== "ACTIVE" ? legacy.provider : null}
+            banks={banks.map((b) => ({ id: b.id, bankName: b.bankName, last4: b.accountLast4, holderName: b.holderName, status: b.status, current: !b.supersededAt, createdAt: b.createdAt.toISOString() }))}
+          />
+        );
+      })()}
+
+      {tab === "orders" && <OrderPaymentSettings initial={await getOrderSettings(db, workspace.id)} selltroActive={await selltroReady(db, workspace.id)} canEdit={role === "owner" || role === "admin"} />}
+
+      {tab === "shipping" && (async () => {
+        const [rules, zones, shipper] = await Promise.all([listRules(db, workspace.id), listZones(db, workspace.id), getShipper(db, workspace.id)]);
+        return <ShippingSettings rules={rules} zones={zones} shipper={shipper} canEdit={role === "owner" || role === "admin"} csv={exportRulesCsv(rules)} />;
+      })()}
 
       {tab === "billing" && (
         <div className="max-w-3xl space-y-4">

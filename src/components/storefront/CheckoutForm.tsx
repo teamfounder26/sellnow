@@ -15,6 +15,8 @@ export function CheckoutForm(props: {
   accent: string;
   cancelled: boolean;
   provider: { name: string; isTest: boolean } | null;
+  /** Buyer payment options (server truth). Online = Selltro Pay (or a legacy gateway). */
+  methods?: { online: boolean; cod: { enabled: boolean; feeSen: number }; manual: { enabled: boolean } };
   product: P;
   variants: { id: string; name: string; priceSen: number; stock: number }[];
   bump: { id: string; name: string; priceSen: number; type: string } | null;
@@ -35,6 +37,11 @@ export function CheckoutForm(props: {
   const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
   const [delivery, setDelivery] = useState<"shipping" | "pickup">(product.fulfillment === "pickup" ? "pickup" : "shipping");
   const [quote, setQuote] = useState<Quote | null>(null);
+  const methods = props.methods ?? { online: Boolean(props.provider), cod: { enabled: false, feeSen: 0 }, manual: { enabled: false } };
+  const available = ([methods.online && "online", methods.cod.enabled && physical && "cod", methods.manual.enabled && "manual_transfer"].filter(Boolean) as ("online" | "cod" | "manual_transfer")[]);
+  const [payMethod, setPayMethod] = useState<"online" | "cod" | "manual_transfer">(available[0] ?? "online");
+  const [dest, setDest] = useState<{ postcode: string; state: string }>({ postcode: "", state: "" });
+  const destination = /^\d{5}$/.test(dest.postcode) && dest.state ? dest : null;
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [error, setError] = useState<{ code: string; params?: Record<string, string | number> } | null>(props.cancelled ? { code: "checkout.cancelled" } : null);
   const [pending, start] = useTransition();
@@ -51,7 +58,7 @@ export function CheckoutForm(props: {
 
   useEffect(() => {
     let live = true;
-    void quoteAction(props.slug, { lines, couponCode: appliedCoupon, deliveryMethod: physical ? delivery : null }).then((r) => {
+    void quoteAction(props.slug, { lines, couponCode: appliedCoupon, deliveryMethod: physical ? delivery : null, destination, paymentMethod: payMethod }).then((r) => {
       if (!live) return;
       if (r.ok) {
         setQuote(r.quote);
@@ -64,7 +71,8 @@ export function CheckoutForm(props: {
     return () => {
       live = false;
     };
-  }, [lines, appliedCoupon, delivery, physical, props.slug, t]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, appliedCoupon, delivery, physical, props.slug, t, destination?.postcode, destination?.state, payMethod]);
 
   const submit = (form: FormData) =>
     start(async () => {
@@ -82,6 +90,7 @@ export function CheckoutForm(props: {
         lines,
         couponCode: appliedCoupon,
         deliveryMethod: physical ? delivery : null,
+        paymentMethod: payMethod,
         customer: {
           name: String(form.get("name") ?? ""),
           email: String(form.get("email") ?? ""),
@@ -109,13 +118,13 @@ export function CheckoutForm(props: {
   const input = "h-11 w-full rounded-xl border border-black/10 bg-white px-3.5 text-[15px] focus:outline-none focus:ring-4 focus:ring-black/5";
   const label = "mb-1 block text-sm font-semibold";
 
-  if (!props.provider) return <p className="mt-6 rounded-2xl bg-white p-5 font-semibold ring-1 ring-black/5">{t("checkout.paymentsUnavailable")}</p>;
+  if (!available.length) return <p className="mt-6 rounded-2xl bg-white p-5 font-semibold ring-1 ring-black/5">{t("checkout.paymentsUnavailable")}</p>;
 
   return (
     <form action={submit} className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
       <div className="space-y-5">
         {error && <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{t(error.code, error.params)}</p>}
-        {props.provider.isTest && <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">{t("checkout.testModeNote")}</p>}
+        {props.provider?.isTest && payMethod === "online" && <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">{t("checkout.testModeNote")}</p>}
         <fieldset className="space-y-3 rounded-3xl bg-white p-5 ring-1 ring-black/5">
           <legend className="sr-only">{t("checkout.yourDetails")}</legend>
           <p className="text-lg font-bold">{t("checkout.yourDetails")}</p>
@@ -162,7 +171,7 @@ export function CheckoutForm(props: {
                 </div>
                 <div>
                   <label className={label} htmlFor="co-pc">{t("checkout.postcode")}</label>
-                  <input id="co-pc" name="postcode" required inputMode="numeric" pattern="\d{5}" maxLength={5} autoComplete="postal-code" className={input} />
+                  <input id="co-pc" name="postcode" required inputMode="numeric" pattern="\d{5}" maxLength={5} autoComplete="postal-code" className={input} value={dest.postcode} onChange={(e) => setDest({ ...dest, postcode: e.target.value.replace(/\D/g, "") })} />
                 </div>
                 <div>
                   <label className={label} htmlFor="co-city">{t("checkout.city")}</label>
@@ -170,7 +179,7 @@ export function CheckoutForm(props: {
                 </div>
                 <div>
                   <label className={label} htmlFor="co-state">{t("checkout.state")}</label>
-                  <select id="co-state" name="state" required className={input} defaultValue="">
+                  <select id="co-state" name="state" required className={input} value={dest.state} onChange={(e) => setDest({ ...dest, state: e.target.value })}>
                     <option value="" disabled>—</option>
                     {props.states.map((s) => (
                       <option key={s} value={s}>{s}</option>
@@ -187,7 +196,22 @@ export function CheckoutForm(props: {
         )}
       </div>
 
-      <aside className="h-fit space-y-4 rounded-3xl bg-white p-5 ring-1 ring-black/5 lg:sticky lg:top-6">
+      {available.length > 0 && (
+        <fieldset className="space-y-2 rounded-3xl bg-white p-5 ring-1 ring-black/5 lg:col-start-1">
+          <legend className="px-1 text-lg font-bold">{t("checkout.payWith")}</legend>
+          {available.map((m) => (
+            <label key={m} className="flex cursor-pointer items-start gap-3 rounded-2xl p-3 ring-1 ring-black/10 has-[:checked]:ring-2 has-[:checked]:ring-black/40">
+              <input type="radio" name="paymethod" className="mt-1" checked={payMethod === m} onChange={() => setPayMethod(m)} />
+              <span>
+                <span className="block font-semibold">{t(`checkout.method.${m}`)}</span>
+                <span className="block text-xs opacity-70">{m === "online" ? (props.provider?.name ?? "Selltro Pay") : m === "cod" ? t("checkout.codHint", { fee: formatMYR(methods.cod.feeSen, locale) }) : t("checkout.manualHint")}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+
+      <aside className="h-fit space-y-4 rounded-3xl bg-white p-5 ring-1 ring-black/5 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:sticky lg:top-6">
         <p className="text-lg font-bold">{t("checkout.summary")}</p>
         {props.cart ? (
           <ul className="space-y-3">
@@ -247,16 +271,17 @@ export function CheckoutForm(props: {
           <dl className="space-y-1.5 border-t border-black/5 pt-3 text-sm">
             <div className="flex justify-between"><dt>{t("checkout.subtotal")}</dt><dd>{formatMYR(quote.subtotalSen, locale)}</dd></div>
             {quote.discountSen > 0 && <div className="flex justify-between text-green-700"><dt>{t("checkout.discount")}</dt><dd>−{formatMYR(quote.discountSen, locale)}</dd></div>}
-            {quote.deliveryMethod && <div className="flex justify-between"><dt>{t("checkout.shippingFee")}</dt><dd>{formatMYR(quote.shippingSen, locale)}</dd></div>}
+            {quote.deliveryMethod && <div className="flex justify-between"><dt>{t("checkout.shippingFee")}</dt><dd>{quote.shippingPending ? t("checkout.shippingAfterAddress") : formatMYR(quote.shippingSen, locale)}</dd></div>}
+            {quote.codFeeSen > 0 && <div className="flex justify-between"><dt>{t("checkout.codFee")}</dt><dd>{formatMYR(quote.codFeeSen, locale)}</dd></div>}
             <div className="flex justify-between pt-1 text-lg font-extrabold"><dt>{t("checkout.total")}</dt><dd>{formatMYR(quote.totalSen, locale)}</dd></div>
           </dl>
         )}
-        <button disabled={pending || !quote || Boolean(quoteError)} className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full font-bold shadow-[inset_0_-2px_0_rgb(0_0_0/0.1)] disabled:opacity-50" style={{ background: props.accent, color: props.onAccent ?? "#171717" }}>
+        <button disabled={pending || !quote || Boolean(quoteError) || (quote.shippingPending && !destination)} className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full font-bold shadow-[inset_0_-2px_0_rgb(0_0_0/0.1)] disabled:opacity-50" style={{ background: props.accent, color: props.onAccent ?? "#171717" }}>
           {pending ? <Loader2 className="size-4 animate-spin" /> : <Lock className="size-4" />}
-          {pending ? t("checkout.processing") : t("checkout.pay", { amount: quote ? formatMYR(quote.totalSen, locale) : "" })}
+          {pending ? t("checkout.processing") : payMethod === "online" ? t("checkout.pay", { amount: quote ? formatMYR(quote.totalSen, locale) : "" }) : t("checkout.placeOrder", { amount: quote ? formatMYR(quote.totalSen, locale) : "" })}
         </button>
         <p className="flex items-start gap-1.5 text-xs opacity-70">
-          <ShieldCheck className="mt-0.5 size-3.5 shrink-0" /> {t("checkout.secureNote", { provider: props.provider.name })}
+          <ShieldCheck className="mt-0.5 size-3.5 shrink-0" /> {payMethod === "online" ? t("checkout.secureNote", { provider: props.provider?.name ?? "Selltro Pay" }) : t(`checkout.method.${payMethod}`)}
         </p>
       </aside>
     </form>

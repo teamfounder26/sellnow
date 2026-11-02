@@ -3,7 +3,8 @@ import { and, eq } from "drizzle-orm";
 import { CheckCircle2, Clock, XCircle, Download } from "lucide-react";
 import { getDb } from "@/lib/db";
 import { orders, orderItems, downloadEntitlements, storefronts, workspaces } from "@/lib/db/schema";
-import { verifyOrderViewToken } from "@/lib/commerce/checkout";
+import { checkoutPaymentOptions, verifyOrderViewToken } from "@/lib/commerce/checkout";
+import { TransferProofForm } from "@/components/storefront/TransferProofForm";
 import { entitlementToken } from "@/lib/commerce/events";
 import { getT } from "@/lib/i18n/server";
 import { formatMYR } from "@/lib/money";
@@ -44,7 +45,22 @@ export default async function OrderStatusPage({ params, searchParams }: { params
         <h1 className="mt-4 text-2xl font-extrabold">
           {order.paymentStatus === "PAID" ? t("order.thanksPaid") : waiting ? t("order.thanksPending") : order.paymentStatus === "CANCELLED" ? t("order.thanksCancelled") : t("order.thanksFailed")}
         </h1>
-        {waiting && <p className="mt-2 text-sm text-muted">{t("order.thanksPendingBody")}</p>}
+        {waiting && order.paymentMethod === "online" && <p className="mt-2 text-sm text-muted">{t("order.thanksPendingBody")}</p>}
+        {order.paymentMethod === "cod" && order.orderStatus !== "CANCELLED" && <p className="mt-2 text-sm text-muted">{t("checkout.codPlaced", { amount: formatMYR(order.totalSen, locale) })}</p>}
+        {order.paymentMethod === "manual_transfer" && waiting && (async () => {
+          const opts = await checkoutPaymentOptions(db, order.workspaceId);
+          return (
+            <div className="mt-5 space-y-2 rounded-2xl bg-canvas p-4 text-left text-sm">
+              <p className="font-bold">{t("checkout.transferTitle", { amount: formatMYR(order.totalSen, locale) })}</p>
+              <p>{opts.manual.bankName} · {opts.manual.accountName}</p>
+              <p className="font-mono text-base font-bold">{opts.manual.accountNumber}</p>
+              <p>{t("checkout.transferRef", { n: order.number })}</p>
+              {opts.manual.instructions && <p className="text-muted">{opts.manual.instructions}</p>}
+              <p className="text-xs text-muted">{t("checkout.transferDeadline", { h: opts.manual.deadlineHours })}</p>
+              <TransferProofForm orderId={order.id} token={k!} />
+            </div>
+          );
+        })()}
         {order.paymentStatus === "FAILED" && <p className="mt-2 text-sm text-muted">{t("order.thanksFailedBody")}</p>}
         <p className="mt-5 text-sm font-semibold text-muted">{t("order.number", { n: order.number })} · {ws?.name}</p>
         <ul className="mt-4 space-y-1 text-left text-sm">

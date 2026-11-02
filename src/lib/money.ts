@@ -13,7 +13,7 @@ export function formatMYR(sen: number, locale: "ms" | "en" = "ms"): string {
     style: "currency",
     currency: "MYR",
     minimumFractionDigits: 2,
-  }).format(sen / 100);
+  }).format((sen || 0) / 100); // `|| 0` also turns −0 (e.g. a negated zero balance) into 0
 }
 
 export function senToInput(sen: number | null | undefined): string {

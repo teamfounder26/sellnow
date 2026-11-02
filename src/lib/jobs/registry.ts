@@ -2,3 +2,4 @@
 import "@/lib/onboarding/research-job";
 import "@/lib/website/generate-job";
 import "@/lib/posters/brief-job";
+import "@/lib/couriers/bulk-job";

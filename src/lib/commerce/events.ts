@@ -9,6 +9,8 @@ import type { VerifiedEvent } from "@/lib/payments/types";
 import { canTransitionPayment, type PaymentStatus } from "./payment-state";
 import { releaseStock } from "./checkout";
 import { evaluateOrderAchievements } from "@/lib/achievements/service";
+import { onSelltroPaid } from "@/lib/finance/selltro-pay";
+import { orderEvent } from "@/lib/orders/events";
 
 export type ApplyResult = { status: "duplicate" | "ignored" | "applied" | "rejected"; orderId?: string; paymentStatus?: PaymentStatus; reason?: string };
 
@@ -143,8 +145,12 @@ export async function applyPaymentEvent(db: DB, workspaceId: string, ev: Verifie
       const items = await tx.query.orderItems.findMany({ where: eq(orderItems.orderId, order.id) });
       const digitalCount = await grantEntitlements(tx, order);
       if (digitalCount === items.length) patch.fulfillmentStatus = "DELIVERED_DIGITAL";
+      else if (order.deliveryMethod === "shipping" && order.fulfillmentStatus === "UNFULFILLED") patch.fulfillmentStatus = "READY_TO_SHIP";
+      if (order.orderStatus === "NEW") patch.orderStatus = "CONFIRMED";
     }
     await tx.update(orders).set(patch).where(eq(orders.id, order.id));
+    if (to === "PAID" && order.provider === "selltro_pay") await onSelltroPaid(tx, { ...order, ...patch } as typeof orders.$inferSelect);
+    await orderEvent(tx, { workspaceId, orderId: order.id, type: `payment.${to.toLowerCase()}`, data: { provider: ev.provider, eventId: ev.eventId } });
     await tx.update(paymentEvents).set({ resultingStatus: to }).where(eq(paymentEvents.id, eventRowId));
     await audit(tx, { workspaceId, action: `payment.${to.toLowerCase()}`, entity: "order", entityId: order.id, data: { provider: ev.provider, eventId: ev.eventId } });
     if (to === "PAID") becamePaid = { ...order, ...patch } as typeof orders.$inferSelect;

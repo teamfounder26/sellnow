@@ -3,6 +3,10 @@ import type { DB } from "@/lib/db";
 import { orders, orderItems, customers, paymentEvents, downloadEntitlements, integrations } from "@/lib/db/schema";
 import { AppError } from "@/lib/errors";
 import { audit } from "@/lib/audit";
+import { newId } from "@/lib/ids";
+import { onSelltroRefund } from "@/lib/finance/selltro-pay";
+import { raiseAlert } from "@/lib/admin/alerts";
+import { orderEvent } from "@/lib/orders/events";
 import { canTransitionPayment, type PaymentStatus } from "./payment-state";
 import { readSecrets } from "@/lib/payments/integrations";
 import { StripeGateway } from "@/lib/payments/stripe";
@@ -67,6 +71,14 @@ export async function refundOrder(db: DB, ctx: { workspaceId: string; userId: st
     if (to === "REFUNDED") {
       await tx.update(downloadEntitlements).set({ revokedAt: new Date() }).where(eq(downloadEntitlements.orderId, order.id));
     }
+    if (order.provider === "selltro_pay") {
+      // Billplz has no refund API: the seller's balance is reduced now and SellNow finance returns
+      // the money to the buyer from the platform account (tracked as an alert until done).
+      const refundId = newId("rfd");
+      await onSelltroRefund(tx, order, refundId, amountSen);
+      await raiseAlert(tx, { kind: "payment.refund_to_execute", severity: "warning", message: `Refund RM${(amountSen / 100).toFixed(2)} for order #${order.number} must be paid back to the buyer.`, dedupeKey: `refund:${refundId}`, link: "/admin/payments", workspaceId: ctx.workspaceId });
+    }
+    await orderEvent(tx, { workspaceId: ctx.workspaceId, orderId: order.id, type: "payment.refunded", actorUserId: ctx.userId, data: { amountSen } });
     await audit(tx, { workspaceId: ctx.workspaceId, actorUserId: ctx.userId, action: "order.refunded", entity: "order", entityId: order.id, data: { amountSen, provider: order.provider } });
   });
 }

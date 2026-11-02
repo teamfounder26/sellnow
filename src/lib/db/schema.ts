@@ -72,6 +72,12 @@ export const fulfillmentStatusEnum = pgEnum("fulfillment_status", [
   "FULFILLED",
   "DELIVERED_DIGITAL",
   "NOT_REQUIRED",
+  // V3 physical fulfilment lifecycle (FULFILLED is kept for V1/V2 orders and means "shipped").
+  "READY_TO_SHIP",
+  "BOOKING_PENDING",
+  "SHIPPED",
+  "DELIVERED",
+  "RETURNED",
 ]);
 export const assetVisibilityEnum = pgEnum("asset_visibility", ["public", "private"]);
 export const leadStatusEnum = pgEnum("lead_status", ["new", "contacted", "qualified", "won", "lost"]);
@@ -159,6 +165,9 @@ export const workspaces = pgTable("workspaces", {
   currency: text("currency").notNull().default("MYR"),
   timezone: text("timezone").notNull().default("Asia/Kuala_Lumpur"),
   plan: text("plan").notNull().default("free"),
+  /** Set by Superadmin. A suspended tenant cannot take new orders or payments. */
+  suspendedAt: ts("suspended_at"),
+  suspendedReason: text("suspended_reason"),
   createdBy: text("created_by")
     .notNull()
     .references(() => users.id),
@@ -603,6 +612,19 @@ export const orders = pgTable(
     isTest: boolean("is_test").notNull().default(false),
     /** SellNow ad id captured from the ad's destination URL (?sn_ad=…) — "confirmed store orders" per ad. */
     adRef: text("ad_ref"),
+    // ---- V3: separate lifecycles (order / payment / fulfilment / settlement / COD) ----
+    orderStatus: text("order_status").$type<OrderState>().notNull().default("NEW"),
+    /** How the buyer pays: Selltro Pay (online), cash on delivery, or a direct bank transfer to the seller. */
+    paymentMethod: text("payment_method").$type<PaymentMethod>().notNull().default("online"),
+    settlementStatus: text("settlement_status").$type<SettlementState>().notNull().default("NOT_ELIGIBLE"),
+    codStatus: text("cod_status").$type<CodState>().notNull().default("NOT_APPLICABLE"),
+    codFeeSen: integer("cod_fee_sen").notNull().default(0),
+    /** Parcel weight (grams) used for the shipping rule. */
+    weightGrams: integer("weight_grams"),
+    /** The shipping rule applied at checkout, frozen so later rule edits never change past orders. */
+    shippingRuleSnapshot: jsonb("shipping_rule_snapshot").$type<Record<string, unknown> | null>(),
+    /** What the courier actually charged (customer shipping is `shippingSen`). */
+    courierCostSen: integer("courier_cost_sen"),
     /** Client-generated per checkout attempt; prevents duplicate orders on double submit. */
     idempotencyKey: text("idempotency_key").notNull().unique(),
     /** True while stock is held for this unpaid order. */
@@ -1210,4 +1232,666 @@ export const posterVersions = pgTable(
     completedAt: ts("completed_at"),
   },
   (t) => [uniqueIndex("poster_versions_uq").on(t.posterId, t.version), uniqueIndex("poster_versions_key_uq").on(t.workspaceId, t.requestKey), index("poster_versions_poster_idx").on(t.posterId)],
+);
+
+// ================================================================ V3 — Commerce infrastructure
+export type OrderState = "NEW" | "CONFIRMED" | "PROCESSING" | "COMPLETED" | "CANCELLED" | "RETURNED";
+export type PaymentMethod = "online" | "cod" | "manual_transfer";
+export type SettlementState = "NOT_ELIGIBLE" | "PENDING" | "AVAILABLE" | "SCHEDULED" | "PROCESSING" | "SETTLED" | "ON_HOLD" | "FAILED";
+export type CodState = "NOT_APPLICABLE" | "AWAITING_DELIVERY" | "AWAITING_REMITTANCE" | "REMITTED" | "RECONCILED" | "DISPUTED";
+
+// ---------------------------------------------------------------- Selltro Pay (Billplz underneath)
+export type SellerPayStatus = "NOT_ACTIVATED" | "PENDING_VERIFICATION" | "ACTIVE" | "RESTRICTED" | "SUSPENDED";
+/** One per tenant. The seller never sees Billplz — collections and keys are platform-managed. */
+export const sellerPaymentAccounts = pgTable("seller_payment_accounts", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  status: text("status").$type<SellerPayStatus>().notNull().default("NOT_ACTIVATED"),
+  businessType: text("business_type").$type<"individual" | "sole_prop" | "company">(),
+  legalName: text("legal_name"),
+  /** SSM / company registration number (business identifier, not secret). */
+  registrationNumber: text("registration_number"),
+  /** MyKad / passport number — encrypted; only the last 4 digits are shown. */
+  idNumberCiphertext: text("id_number_ciphertext"),
+  idNumberLast4: text("id_number_last4"),
+  contactPhone: text("contact_phone"),
+  termsAcceptedAt: ts("terms_accepted_at"),
+  submittedAt: ts("submitted_at"),
+  reviewedBy: text("reviewed_by").references(() => users.id),
+  reviewedAt: ts("reviewed_at"),
+  reviewNote: text("review_note"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export type BankAccountStatus = "UNVERIFIED" | "PENDING_VERIFICATION" | "VERIFIED" | "REJECTED" | "SUSPENDED";
+/** Payout destinations. Changes add a new row (old ones are superseded, never edited) for a full history. */
+export const sellerBankAccounts = pgTable(
+  "seller_bank_accounts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    bankCode: text("bank_code").notNull(), // SWIFT code (Billplz Payment Order `bank_code`)
+    bankName: text("bank_name").notNull(),
+    accountNumberCiphertext: text("account_number_ciphertext").notNull(),
+    accountLast4: text("account_last4").notNull(),
+    holderName: text("holder_name").notNull(),
+    accountType: text("account_type").$type<"personal" | "business">().notNull().default("personal"),
+    status: text("status").$type<BankAccountStatus>().notNull().default("PENDING_VERIFICATION"),
+    reviewedBy: text("reviewed_by").references(() => users.id),
+    reviewedAt: ts("reviewed_at"),
+    reviewNote: text("review_note"),
+    createdBy: text("created_by").references(() => users.id),
+    supersededAt: ts("superseded_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("seller_bank_ws_idx").on(t.workspaceId), uniqueIndex("seller_bank_current_uq").on(t.workspaceId).where(sql`superseded_at is null`)],
+);
+
+/** Selltro Pay collections (one per Billplz bill). The order keeps its own payment status. */
+export const paymentTransactions = pgTable(
+  "payment_transactions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => orders.id),
+    provider: text("provider").notNull(), // "selltro_pay"
+    environment: text("environment").$type<"test" | "sandbox" | "live">().notNull(),
+    billId: text("bill_id"),
+    amountSen: integer("amount_sen").notNull(),
+    status: text("status").$type<"PENDING" | "PAID" | "FAILED" | "CANCELLED" | "REFUNDED" | "PARTIALLY_REFUNDED">().notNull().default("PENDING"),
+    providerStatus: text("provider_status"),
+    processingFeeSen: integer("processing_fee_sen").notNull().default(0),
+    platformFeeSen: integer("platform_fee_sen").notNull().default(0),
+    refundedSen: integer("refunded_sen").notNull().default(0),
+    paidAt: ts("paid_at"),
+    /** Result of comparing the local record with Billplz (GET bill). */
+    reconcileStatus: text("reconcile_status").$type<"unreconciled" | "matched" | "mismatch">().notNull().default("unreconciled"),
+    reconciledAt: ts("reconciled_at"),
+    reconcileNote: text("reconcile_note"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("payment_tx_bill_uq").on(t.billId), uniqueIndex("payment_tx_order_uq").on(t.orderId), index("payment_tx_ws_idx").on(t.workspaceId, t.status)],
+);
+
+// ---------------------------------------------------------------- Ledger (immutable, double-entry)
+/**
+ * Every money movement is a balanced transaction (entries sum to 0; debit > 0, credit < 0).
+ * Rows are insert-only: corrections are new reversing/adjusting transactions, never edits.
+ * (source_type, source_id, account) is unique, so replaying an event can't post it twice.
+ */
+export const ledgerEntries = pgTable(
+  "ledger_entries",
+  {
+    id: text("id").primaryKey(),
+    txnId: text("txn_id").notNull(),
+    workspaceId: text("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
+    account: text("account").notNull(), // see lib/finance/ledger.ts ACCOUNTS
+    amountSen: integer("amount_sen").notNull(),
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    memo: text("memo"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("ledger_source_uq").on(t.sourceType, t.sourceId, t.account), index("ledger_ws_account_idx").on(t.workspaceId, t.account), index("ledger_txn_idx").on(t.txnId)],
+);
+
+/** Seller-level payout holds (risk, disputes). Released holds keep their history. */
+export const settlementHolds = pgTable(
+  "settlement_holds",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    reason: text("reason").notNull(),
+    createdBy: text("created_by").references(() => users.id),
+    releasedBy: text("released_by").references(() => users.id),
+    releasedAt: ts("released_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("settlement_holds_ws_idx").on(t.workspaceId)],
+);
+
+/** Manual credit/debit to a seller balance. Needs a second admin to approve (maker ≠ checker). */
+export const paymentAdjustments = pgTable(
+  "payment_adjustments",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    amountSen: integer("amount_sen").notNull(), // + credit to seller, − debit
+    reason: text("reason").notNull(),
+    status: text("status").$type<"pending_approval" | "approved" | "rejected">().notNull().default("pending_approval"),
+    createdBy: text("created_by").references(() => users.id),
+    approvedBy: text("approved_by").references(() => users.id),
+    approvedAt: ts("approved_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("payment_adj_ws_idx").on(t.workspaceId)],
+);
+
+export type BatchStatus = "CALCULATED" | "AWAITING_APPROVAL" | "AWAITING_FUNDING" | "QUEUED" | "PROCESSING" | "COMPLETED" | "PARTIALLY_COMPLETED" | "FAILED";
+/** One batch per settlement date (T+1, Asia/Kuala_Lumpur) and environment. */
+export const settlementBatches = pgTable(
+  "settlement_batches",
+  {
+    id: text("id").primaryKey(),
+    settlementDate: text("settlement_date").notNull(), // YYYY-MM-DD (MYT)
+    environment: text("environment").$type<"test" | "sandbox" | "live">().notNull(),
+    periodStart: ts("period_start").notNull(),
+    periodEnd: ts("period_end").notNull(),
+    status: text("status").$type<BatchStatus>().notNull().default("CALCULATED"),
+    tenantCount: integer("tenant_count").notNull().default(0),
+    itemCount: integer("item_count").notNull().default(0),
+    grossSen: integer("gross_sen").notNull().default(0),
+    feesSen: integer("fees_sen").notNull().default(0),
+    adjustmentsSen: integer("adjustments_sen").notNull().default(0),
+    netSen: integer("net_sen").notNull().default(0),
+    approvedBy: text("approved_by").references(() => users.id),
+    approvedAt: ts("approved_at"),
+    secondApprovedBy: text("second_approved_by").references(() => users.id),
+    secondApprovedAt: ts("second_approved_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("settlement_batch_date_uq").on(t.settlementDate, t.environment)],
+);
+
+export type SettlementStatus = "PENDING" | "CALCULATED" | "AWAITING_APPROVAL" | "AWAITING_FUNDING" | "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED" | "ON_HOLD" | "REVERSED" | "UNKNOWN";
+/** One seller's payout inside a batch. `reference` is sent as Billplz `reference_id` (unique per collection). */
+export const settlements = pgTable(
+  "settlements",
+  {
+    id: text("id").primaryKey(),
+    batchId: text("batch_id")
+      .notNull()
+      .references(() => settlementBatches.id),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    reference: text("reference").notNull().unique(),
+    status: text("status").$type<SettlementStatus>().notNull().default("CALCULATED"),
+    holdReason: text("hold_reason"),
+    grossSen: integer("gross_sen").notNull(),
+    processingFeeSen: integer("processing_fee_sen").notNull(),
+    platformFeeSen: integer("platform_fee_sen").notNull(),
+    refundsSen: integer("refunds_sen").notNull(),
+    adjustmentsSen: integer("adjustments_sen").notNull(),
+    netSen: integer("net_sen").notNull(),
+    bankAccountId: text("bank_account_id").references(() => sellerBankAccounts.id),
+    bankSnapshot: jsonb("bank_snapshot").$type<{ bankCode: string; bankName: string; last4: string; holderName: string } | null>(),
+    scheduledFor: text("scheduled_for").notNull(),
+    completedAt: ts("completed_at"),
+    providerRef: text("provider_ref"),
+    providerStatus: text("provider_status"),
+    lastError: text("last_error"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("settlements_batch_ws_uq").on(t.batchId, t.workspaceId), index("settlements_ws_idx").on(t.workspaceId, t.status)],
+);
+
+/** What a settlement contains. Unique (source_type, source_id): a transaction can never be in two settlements. */
+export const settlementItems = pgTable(
+  "settlement_items",
+  {
+    id: text("id").primaryKey(),
+    settlementId: text("settlement_id")
+      .notNull()
+      .references(() => settlements.id),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sourceType: text("source_type").$type<"payment" | "refund" | "adjustment">().notNull(),
+    sourceId: text("source_id").notNull(),
+    grossSen: integer("gross_sen").notNull(),
+    processingFeeSen: integer("processing_fee_sen").notNull().default(0),
+    platformFeeSen: integer("platform_fee_sen").notNull().default(0),
+    netSen: integer("net_sen").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("settlement_items_source_uq").on(t.sourceType, t.sourceId), index("settlement_items_settlement_idx").on(t.settlementId)],
+);
+
+/** Each attempt to send money. A new attempt is allowed only after the previous one is confirmed failed. */
+export const disbursementAttempts = pgTable(
+  "disbursement_attempts",
+  {
+    id: text("id").primaryKey(),
+    settlementId: text("settlement_id")
+      .notNull()
+      .references(() => settlements.id),
+    attemptNo: integer("attempt_no").notNull(),
+    provider: text("provider").notNull(), // "billplz_payment_order" | "simulated"
+    providerId: text("provider_id"),
+    status: text("status").$type<"submitting" | "processing" | "completed" | "failed" | "unknown" | "refunded">().notNull(),
+    providerStatus: text("provider_status"),
+    response: jsonb("response").$type<Record<string, unknown> | null>(),
+    error: text("error"),
+    initiatedBy: text("initiated_by").references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("disb_attempt_uq").on(t.settlementId, t.attemptNo), index("disb_provider_idx").on(t.providerId)],
+);
+
+/** Provider callbacks for payouts, deduplicated like payment events. */
+export const payoutWebhookEvents = pgTable(
+  "payout_webhook_events",
+  {
+    id: text("id").primaryKey(),
+    provider: text("provider").notNull(),
+    providerEventId: text("provider_event_id").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    result: text("result"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("payout_webhook_uq").on(t.provider, t.providerEventId)],
+);
+
+/** Funding checks (Billplz Payment Order Limit, ParcelDaily credit) — readings, never actions. */
+export const fundingSnapshots = pgTable(
+  "funding_snapshots",
+  {
+    id: text("id").primaryKey(),
+    source: text("source").notNull(), // "billplz_payment_order_limit" | "parceldaily_credit"
+    amountSen: integer("amount_sen"),
+    ok: boolean("ok").notNull(),
+    error: text("error"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("funding_source_idx").on(t.source, t.createdAt)],
+);
+
+// ---------------------------------------------------------------- Order payment methods
+export type OrderPaymentSettings = {
+  onlineEnabled: boolean;
+  codEnabled: boolean;
+  cod: { minSen: number | null; maxSen: number | null; feeSen: number; regions: string[]; courierConfirmed: boolean };
+  manualEnabled: boolean;
+  manual: { bankName: string; accountName: string; accountNumber: string; instructions: string; deadlineHours: number; proofRequired: boolean };
+  freeShippingThresholdSen: number | null;
+  defaultWeightGrams: number;
+};
+export const orderSettings = pgTable("order_settings", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  settings: jsonb("settings").$type<OrderPaymentSettings>().notNull(),
+  updatedBy: text("updated_by").references(() => users.id),
+  updatedAt: updatedAt(),
+});
+
+/** Manual transfers are confirmed by a person with permission — never by a screenshot alone. */
+export const manualTransferVerifications = pgTable(
+  "manual_transfer_verifications",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => orders.id),
+    proofAssetId: text("proof_asset_id").references(() => assets.id),
+    payerReference: text("payer_reference"),
+    status: text("status").$type<"submitted" | "approved" | "rejected">().notNull().default("submitted"),
+    reviewedBy: text("reviewed_by").references(() => users.id),
+    reviewedAt: ts("reviewed_at"),
+    note: text("note"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("manual_tx_order_idx").on(t.orderId)],
+);
+
+/** Order timeline (payment, shipment, status changes, user actions). */
+export const orderEvents = pgTable(
+  "order_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => orders.id),
+    type: text("type").notNull(),
+    actorUserId: text("actor_user_id"),
+    data: jsonb("data").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [index("order_events_order_idx").on(t.orderId, t.createdAt)],
+);
+
+// ---------------------------------------------------------------- Shipping postage rules
+/** Custom zones (states and/or postcode ranges). Built-in zones (peninsular/sabah/sarawak/labuan) need no row. */
+export const shippingZones = pgTable(
+  "shipping_zones",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    states: jsonb("states").$type<string[]>().notNull().default([]),
+    postcodeRanges: jsonb("postcode_ranges").$type<{ from: string; to: string }[]>().notNull().default([]),
+    createdAt: createdAt(),
+  },
+  (t) => [index("shipping_zones_ws_idx").on(t.workspaceId)],
+);
+
+export const shippingRateRules = pgTable(
+  "shipping_rate_rules",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    zone: text("zone").notNull(), // "peninsular" | "sabah" | "sarawak" | "labuan" | "all" | "zone:<id>"
+    deliveryType: text("delivery_type").$type<"normal" | "cod">().notNull(),
+    minGrams: integer("min_grams").notNull(),
+    maxGrams: integer("max_grams").notNull(),
+    feeSen: integer("fee_sen").notNull(),
+    courier: text("courier"),
+    priority: integer("priority").notNull().default(100),
+    status: text("status").$type<"active" | "inactive">().notNull().default("active"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("shipping_rules_ws_idx").on(t.workspaceId, t.status)],
+);
+
+// ---------------------------------------------------------------- Couriers & shipments
+export type CourierProvider = "parceldaily" | "jnt" | "poslaju" | "ninjavan" | "spx" | "dhl";
+export type CourierConnectionStatus = "NOT_CONNECTED" | "CONNECTING" | "CONNECTED" | "ERROR" | "EXPIRED" | "DISABLED" | "AWAITING_ACCESS";
+export type ShipperProfile = {
+  senderName: string;
+  senderPhone: string;
+  pickup: { line1: string; line2?: string; postcode: string; city: string; state: string };
+  returnAddress?: { line1: string; line2?: string; postcode: string; city: string; state: string } | null;
+  defaultWeightGrams: number;
+  defaultContent: string;
+};
+export const courierConnections = pgTable(
+  "courier_connections",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    provider: text("provider").$type<CourierProvider>().notNull(),
+    /** platform = SellNow-managed ParcelDaily; own = the seller's courier account. */
+    mode: text("mode").$type<"platform" | "own">().notNull(),
+    status: text("status").$type<CourierConnectionStatus>().notNull().default("NOT_CONNECTED"),
+    credentialsCiphertext: text("credentials_ciphertext"),
+    config: jsonb("config").$type<{ preferredService?: string | null; codEnabled?: boolean; accountLabel?: string }>().notNull().default({}),
+    isDefault: boolean("is_default").notNull().default(false),
+    lastError: text("last_error"),
+    lastCheckedAt: ts("last_checked_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("courier_conn_ws_provider_uq").on(t.workspaceId, t.provider), index("courier_conn_ws_idx").on(t.workspaceId)],
+);
+
+export const shippingSettings = pgTable("shipping_settings", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  shipper: jsonb("shipper").$type<ShipperProfile>().notNull(),
+  updatedAt: updatedAt(),
+});
+
+export type ShipmentStatus =
+  | "NOT_BOOKED" | "BOOKING_PENDING" | "BOOKED" | "AWB_READY" | "PICKUP_PENDING" | "PICKED_UP" | "IN_TRANSIT"
+  | "OUT_FOR_DELIVERY" | "DELIVERED" | "DELIVERY_FAILED" | "RETURNED" | "CANCELLED" | "FAILED";
+export const shipments = pgTable(
+  "shipments",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => orders.id),
+    connectionId: text("connection_id").references(() => courierConnections.id),
+    provider: text("provider").notNull(), // courier provider or "manual"
+    status: text("status").$type<ShipmentStatus>().notNull().default("BOOKING_PENDING"),
+    providerStatus: text("provider_status"),
+    serviceCode: text("service_code"),
+    serviceName: text("service_name"),
+    courierName: text("courier_name"),
+    /** What the courier charges (sen). */
+    courierCostSen: integer("courier_cost_sen"),
+    codAmountSen: integer("cod_amount_sen").notNull().default(0),
+    weightGrams: integer("weight_grams"),
+    externalOrderId: text("external_order_id"),
+    trackingNumber: text("tracking_number"),
+    awbAssetId: text("awb_asset_id").references(() => assets.id),
+    bulkJobId: text("bulk_job_id"),
+    lastError: text("last_error"),
+    providerResponse: jsonb("provider_response").$type<Record<string, unknown> | null>(),
+    bookedAt: ts("booked_at"),
+    deliveredAt: ts("delivered_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    // One live shipment per order: a duplicate push can't create a second booking.
+    uniqueIndex("shipments_order_active_uq").on(t.orderId).where(sql`status not in ('CANCELLED','FAILED')`),
+    index("shipments_ws_idx").on(t.workspaceId, t.status),
+    index("shipments_tracking_idx").on(t.provider, t.trackingNumber),
+    index("shipments_external_idx").on(t.provider, t.externalOrderId),
+  ],
+);
+
+export const shipmentEvents = pgTable(
+  "shipment_events",
+  {
+    id: text("id").primaryKey(),
+    shipmentId: text("shipment_id")
+      .notNull()
+      .references(() => shipments.id),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    status: text("status").$type<ShipmentStatus>().notNull(),
+    providerStatus: text("provider_status"),
+    description: text("description"),
+    source: text("source").$type<"booking" | "webhook" | "poll" | "manual">().notNull(),
+    dedupeKey: text("dedupe_key").notNull(),
+    occurredAt: ts("occurred_at").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("shipment_events_dedupe_uq").on(t.shipmentId, t.dedupeKey), index("shipment_events_ship_idx").on(t.shipmentId)],
+);
+
+/** COD money is tracked separately: "delivered" is not "remitted". */
+export const codRemittances = pgTable(
+  "cod_remittances",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => orders.id),
+    amountSen: integer("amount_sen").notNull(),
+    status: text("status").$type<"REMITTED" | "RECONCILED" | "DISPUTED">().notNull(),
+    reference: text("reference"),
+    recordedBy: text("recorded_by").references(() => users.id),
+    remittedAt: ts("remitted_at").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("cod_remit_order_uq").on(t.orderId)],
+);
+
+/** Inbound courier webhooks, deduplicated. */
+export const courierWebhookEvents = pgTable(
+  "courier_webhook_events",
+  {
+    id: text("id").primaryKey(),
+    provider: text("provider").notNull(),
+    dedupeKey: text("dedupe_key").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    result: text("result"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("courier_webhook_uq").on(t.provider, t.dedupeKey)],
+);
+
+// ---------------------------------------------------------------- Platform (Superadmin)
+export type AdminRole = "owner" | "finance" | "operations" | "support" | "analyst" | "technical";
+/** Platform staff. Separate from workspace roles: a tenant owner is never a platform admin by default. */
+export const platformAdmins = pgTable("platform_admins", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  role: text("role").$type<AdminRole>().notNull(),
+  status: text("status").$type<"active" | "disabled">().notNull().default("active"),
+  createdBy: text("created_by"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+/** Platform-wide configuration (fees, settlement times, kill switches). Every change is audited. */
+export const platformSettings = pgTable("platform_settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").$type<unknown>().notNull(),
+  updatedBy: text("updated_by").references(() => users.id),
+  updatedAt: updatedAt(),
+});
+
+export const systemAlerts = pgTable(
+  "system_alerts",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    severity: text("severity").$type<"info" | "warning" | "critical">().notNull(),
+    workspaceId: text("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
+    message: text("message").notNull(),
+    link: text("link"),
+    data: jsonb("data").$type<Record<string, unknown>>().notNull().default({}),
+    /** One open alert per key — repeated failures update the count instead of flooding. */
+    dedupeKey: text("dedupe_key").notNull(),
+    count: integer("count").notNull().default(1),
+    resolvedAt: ts("resolved_at"),
+    resolvedBy: text("resolved_by").references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("system_alerts_open_uq").on(t.dedupeKey).where(sql`resolved_at is null`), index("system_alerts_open_idx").on(t.resolvedAt, t.severity)],
+);
+
+export type PlanEntitlements = {
+  publishStorefront: boolean;
+  checkout: boolean;
+  maxProducts: number;
+  maxWorkspaces: number;
+  maxWebsites: number;
+  maxMembers: number;
+  creativeStudio: boolean;
+  marketing: boolean;
+  salesAssistant: boolean;
+  advancedAnalytics: boolean;
+  courierAccess: boolean;
+  monthlyAdsStudioAds: number;
+};
+/** Commercial packages, editable by Superadmin. Business logic reads these, never hard-coded prices. */
+export const subscriptionPlans = pgTable("subscription_plans", {
+  id: text("id").primaryKey(), // "free" | "launch" | "growth" | "enterprise" | custom
+  name: text("name").notNull(),
+  status: text("status").$type<"active" | "inactive" | "archived">().notNull().default("active"),
+  monthlySen: integer("monthly_sen").notNull(),
+  annualSen: integer("annual_sen"),
+  trialDays: integer("trial_days").notNull().default(0),
+  monthlyCredits: integer("monthly_credits").notNull(),
+  /** Selltro Pay platform fee for this plan, basis points of the paid amount. */
+  transactionFeeBps: integer("transaction_fee_bps").notNull().default(0),
+  entitlements: jsonb("entitlements").$type<PlanEntitlements>().notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export type TenantSubStatus = "active" | "trial" | "past_due" | "cancelled" | "expired" | "suspended";
+export const tenantSubscriptions = pgTable("tenant_subscriptions", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  planId: text("plan_id")
+    .notNull()
+    .references(() => subscriptionPlans.id),
+  status: text("status").$type<TenantSubStatus>().notNull().default("active"),
+  billingCycle: text("billing_cycle").$type<"monthly" | "annual">().notNull().default("monthly"),
+  /** Price locked at signup (grandfathering) — package price edits don't change existing tenants. */
+  priceSen: integer("price_sen").notNull(),
+  currentPeriodEnd: ts("current_period_end"),
+  trialEndsAt: ts("trial_ends_at"),
+  scheduledPlanId: text("scheduled_plan_id").references(() => subscriptionPlans.id),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+/** Every plan/status change (who, what, why). Also the invoice/payment-failure history once billing is live. */
+export const billingEvents = pgTable(
+  "billing_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    data: jsonb("data").$type<Record<string, unknown>>().notNull().default({}),
+    actorUserId: text("actor_user_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("billing_events_ws_idx").on(t.workspaceId, t.createdAt)],
+);
+
+/** Per-tenant entitlement overrides (auditable, optional expiry). */
+export const tenantFeatureOverrides = pgTable(
+  "tenant_feature_overrides",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    value: jsonb("value").$type<unknown>().notNull(),
+    reason: text("reason").notNull(),
+    createdBy: text("created_by").references(() => users.id),
+    expiresAt: ts("expires_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("tenant_override_uq").on(t.workspaceId, t.key)],
+);
+
+/** Tenant notes and risk flags for platform staff (never shown to the tenant). */
+export const tenantNotes = pgTable(
+  "tenant_notes",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<"note" | "risk_flag" | "support">().notNull(),
+    body: text("body").notNull(),
+    authorId: text("author_id").references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("tenant_notes_ws_idx").on(t.workspaceId)],
 );

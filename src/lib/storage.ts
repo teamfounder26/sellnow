@@ -58,7 +58,7 @@ export function detectAudioMime(buf: Buffer, declared: string): string | null {
 /** Stores already-validated bytes (private documents and voice notes). Tenant-scoped storage key. */
 export async function storeBytes(
   db: DB,
-  opts: { workspaceId: string; buf: Buffer; mime: string; kind: "source_document" | "voice"; originalName: string },
+  opts: { workspaceId: string; buf: Buffer; mime: string; kind: "source_document" | "voice" | "awb" | "payment_proof"; originalName: string },
 ) {
   const id = newId("ast");
   const storageKey = `private/${opts.workspaceId}/${id}`;

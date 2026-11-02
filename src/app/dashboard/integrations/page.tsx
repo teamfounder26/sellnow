@@ -6,14 +6,18 @@ import { metaStatus } from "@/lib/marketing/service";
 import { configuredProviderName } from "@/lib/ai/provider";
 import { transcriptionConfigured } from "@/lib/ai/transcribe";
 import { Badge, Card, GlassIcon, LinkButton } from "@/components/ui";
+import { CourierCards } from "@/components/commerce/CourierCards";
+import { courierCatalog } from "@/lib/couriers/service";
+import { getSellerAccount } from "@/lib/finance/selltro-pay";
 
 export const metadata = { title: "Integrations" };
 
 /** Real connection status for every integration; unbuilt ones say so instead of pretending. */
 export default async function IntegrationsPage() {
-  const { db, workspace } = await requireWorkspace("viewer");
+  const { db, workspace, role } = await requireWorkspace("viewer");
   const { t } = await getT();
-  const [payment, meta] = await Promise.all([getPaymentIntegration(db, workspace.id), metaStatus(db, workspace.id)]);
+  const [legacy, meta, selltro, couriers] = await Promise.all([getPaymentIntegration(db, workspace.id), metaStatus(db, workspace.id), getSellerAccount(db, workspace.id), courierCatalog(db, workspace.id)]);
+  const payment = selltro?.status === "ACTIVE" ? { provider: "Selltro Pay" } : legacy;
   const ai = configuredProviderName();
   const items = [
     { k: "payment", icon: CreditCard, status: payment ? "connected" : "notConnected", detail: payment?.provider, href: "/dashboard/settings?tab=payments" },
@@ -50,6 +54,9 @@ export default async function IntegrationsPage() {
             )}
           </Card>
         ))}
+      </div>
+      <div id="couriers" className="scroll-mt-24">
+        <CourierCards items={couriers} canEdit={role === "owner" || role === "admin"} />
       </div>
     </div>
   );

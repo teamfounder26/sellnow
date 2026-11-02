@@ -25,11 +25,12 @@ export class TestGateway implements PaymentGateway {
     return { body, signature: hmacHex(`test-webhook:${body}`) };
   }
 
-  static verifyWebhook(rawBody: string, signature: string): VerifiedEvent {
+  /** `provider` is "selltro_pay" when Selltro Pay runs in test mode (same simulated page, no money). */
+  static verifyWebhook(rawBody: string, signature: string, provider: "test" | "selltro_pay" = "test"): VerifiedEvent {
     if (!safeEqualHex(signature, hmacHex(`test-webhook:${rawBody}`))) throw new Error("Invalid test gateway signature");
     const e = JSON.parse(rawBody) as { id: string; orderId: string; outcome: PaymentOutcome; amountSen: number; currency: string };
     return {
-      provider: "test",
+      provider,
       eventId: e.id,
       type: `test.${e.outcome}`,
       orderId: e.orderId,

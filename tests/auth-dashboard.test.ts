@@ -59,7 +59,9 @@ describe("dashboard setup, recommendations and personalization", () => {
     const orders = NAV.find((s) => s.key === "orders")!;
     const active = (q: string) => orders.items.filter((i) => subActive(i, "/dashboard/orders", new URLSearchParams(q), orders.items)).map((i) => i.key);
     expect(active("")).toEqual(["allOrders"]);
-    expect(active("status=PAID")).toEqual(["paidOrders"]);
+    // V3 order navigation: lifecycle tabs (?tab=…) replaced the V2 payment-status filters.
+    expect(active("tab=ready")).toEqual(["ordersReady"]);
+    expect(active("tab=cod")).toEqual(["ordersCod"]);
   });
 });
 

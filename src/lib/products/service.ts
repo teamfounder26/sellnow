@@ -1,3 +1,4 @@
+import { entitlementsFor } from "@/lib/admin/packages";
 import { and, asc, count, eq, ne } from "drizzle-orm";
 import { z } from "zod";
 import type { DB } from "@/lib/db";
@@ -139,7 +140,8 @@ export async function createProduct(ctx: Ctx, input: ProductInput) {
   const p = productInputSchema.parse(input);
   const ws = await ctx.db.query.workspaces.findFirst({ where: eq(workspaces.id, ctx.workspaceId) });
   const [{ n } = { n: 0 }] = await ctx.db.select({ n: count() }).from(products).where(eq(products.workspaceId, ctx.workspaceId));
-  const max = getPlan(ws?.plan ?? "free").entitlements.maxProducts;
+  void ws;
+  const max = (await entitlementsFor(ctx.db, ctx.workspaceId)).maxProducts; // DB packages + overrides
   if (n >= max) throw new AppError("products.limitReached", { max });
   await assertOwnedAsset(ctx.db, ctx.workspaceId, p.imageAssetId, "image");
   await assertOwnedAsset(ctx.db, ctx.workspaceId, p.digitalAssetId, "digital_file");

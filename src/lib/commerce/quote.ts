@@ -4,6 +4,9 @@ import { products, productVariants, discountCodes } from "@/lib/db/schema";
 import { ENGINES } from "@/lib/categories";
 import { percentOf } from "@/lib/money";
 import { AppError } from "@/lib/errors";
+import { hasActiveRules, listRules, listZones, pickRule, type RateResult } from "@/lib/shipping/rules";
+import { addressConsistent, regionForPostcode } from "@/lib/shipping/zones";
+import { getOrderSettings } from "@/lib/orders/settings";
 
 export type CartLine = { productId: string; variantId?: string | null; quantity: number };
 export type QuoteLine = {
@@ -15,6 +18,7 @@ export type QuoteLine = {
   quantity: number;
   totalSen: number;
   trackStock: boolean;
+  weightGrams: number;
 };
 export type Quote = {
   lines: QuoteLine[];
@@ -25,6 +29,13 @@ export type Quote = {
   discountCodeId: string | null;
   requiresShippingAddress: boolean;
   deliveryMethod: "shipping" | "pickup" | null;
+  /** Parcel weight used for postage (grams). */
+  weightGrams: number;
+  codFeeSen: number;
+  /** Postage rule applied (null → legacy flat shipping or no shipping). */
+  shippingRule: RateResult["rule"] | null;
+  /** True when this store uses postage rules and no address was given yet (fee not final). */
+  shippingPending: boolean;
 };
 
 export const MAX_QTY = 99;
@@ -36,7 +47,14 @@ export const MAX_QTY = 99;
 export async function computeQuote(
   db: DB | Tx,
   workspaceId: string,
-  input: { lines: CartLine[]; couponCode?: string | null; deliveryMethod?: "shipping" | "pickup" | null },
+  input: {
+    lines: CartLine[];
+    couponCode?: string | null;
+    deliveryMethod?: "shipping" | "pickup" | null;
+    /** Destination for postage rules (postcode decides the zone). */
+    destination?: { postcode: string; state: string } | null;
+    paymentMethod?: "online" | "cod" | "manual_transfer";
+  },
 ): Promise<Quote> {
   if (!input.lines.length) throw new AppError("checkout.emptyCart");
   const merged = new Map<string, CartLine>();
@@ -53,6 +71,7 @@ export async function computeQuote(
     ? await db.query.productVariants.findMany({ where: and(eq(productVariants.workspaceId, workspaceId), inArray(productVariants.id, variantIds)) })
     : [];
 
+  const settings = await getOrderSettings(db, workspaceId);
   const lines: QuoteLine[] = [];
   let needsShipping = false;
   let canPickup = true;
@@ -88,6 +107,7 @@ export async function computeQuote(
       quantity: l.quantity,
       totalSen: unit * l.quantity,
       trackStock: p.trackStock,
+      weightGrams: p.type === "physical" ? (p.weightG ?? settings.defaultWeightGrams) * l.quantity : 0,
     });
   }
   const subtotalSen = lines.reduce((a, l) => a + l.totalSen, 0);
@@ -97,6 +117,27 @@ export async function computeQuote(
     deliveryMethod = input.deliveryMethod === "pickup" && canPickup ? "pickup" : needsShipping ? "shipping" : "pickup";
   }
   if (deliveryMethod !== "shipping") shippingSen = 0;
+  const weightGrams = lines.reduce((a, l) => a + l.weightGrams, 0);
+  const isCod = input.paymentMethod === "cod";
+
+  // V3 postage rules (zone × Normal/COD × weight). Stores without rules keep the legacy flat fee.
+  let shippingRule: Quote["shippingRule"] = null;
+  let shippingPending = false;
+  if (deliveryMethod === "shipping" && (await hasActiveRules(db, workspaceId))) {
+    const dest = input.destination;
+    if (!dest) {
+      shippingPending = true;
+      shippingSen = 0;
+    } else {
+      const region = regionForPostcode(dest.postcode);
+      if (!region || !addressConsistent(dest.postcode, dest.state)) throw new AppError("shipping.addressMismatch");
+      const [rules, zones] = await Promise.all([listRules(db, workspaceId), listZones(db, workspaceId)]);
+      const rate = pickRule(rules, zones, { ...dest, region }, weightGrams, isCod ? "cod" : "normal");
+      if (!rate) throw new AppError("shipping.unavailable");
+      shippingSen = rate.feeSen;
+      shippingRule = rate.rule;
+    }
+  }
 
   let discountSen = 0;
   let discountCodeId: string | null = null;
@@ -107,7 +148,9 @@ export async function computeQuote(
     discountSen = dc.kind === "percent" ? percentOf(subtotalSen, Math.min(100, Math.max(0, dc.value))) : Math.min(dc.value, subtotalSen);
     discountCodeId = dc.id;
   }
-  const totalSen = subtotalSen - discountSen + shippingSen;
+  if (deliveryMethod === "shipping" && settings.freeShippingThresholdSen != null && subtotalSen - discountSen >= settings.freeShippingThresholdSen) shippingSen = 0;
+  const codFeeSen = isCod ? settings.cod.feeSen : 0;
+  const totalSen = subtotalSen - discountSen + shippingSen + codFeeSen;
   if (totalSen < 100) throw new AppError("checkout.minimumAmount"); // gateways require ≥ RM1.00
-  return { lines, subtotalSen, discountSen, shippingSen, totalSen, discountCodeId, requiresShippingAddress: deliveryMethod === "shipping", deliveryMethod };
+  return { lines, subtotalSen, discountSen, shippingSen, totalSen, discountCodeId, requiresShippingAddress: deliveryMethod === "shipping", deliveryMethod, weightGrams, codFeeSen, shippingRule, shippingPending };
 }

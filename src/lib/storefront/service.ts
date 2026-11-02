@@ -1,3 +1,4 @@
+import { entitlementsFor } from "@/lib/admin/packages";
 import { and, desc, eq, inArray, isNull, max } from "drizzle-orm";
 import type { DB } from "@/lib/db";
 import {
@@ -76,7 +77,8 @@ export async function validateForPublish(db: DB, workspaceId: string, userId: st
   if (!sf) return [{ code: "publish.noStorefront" }];
   const ws = await db.query.workspaces.findFirst({ where: eq(workspaces.id, workspaceId) });
   const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
-  if (!getPlan(ws?.plan ?? "free").entitlements.publishStorefront) issues.push({ code: "publish.planRequired" });
+  void ws;
+  if (!(await entitlementsFor(db, workspaceId)).publishStorefront) issues.push({ code: "publish.planRequired" });
   if (!user?.emailVerifiedAt) issues.push({ code: "publish.emailUnverified" });
 
   const c = sf.draftContent;
