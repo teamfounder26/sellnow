@@ -155,6 +155,9 @@ export function StorefrontEditor(props: {
                     {open === s.id && <div className="space-y-3 border-t border-line px-3 py-3"><SectionFields s={s} setProp={(k, v) => setProp(s.id, k, v)} /></div>}
                   </div>
                 ))}
+                <Button type="button" variant="secondary" size="sm" onClick={() => update({ ...content, sections: [...content.sections, { id: `sec_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`, type: "embed", visible: true, props: { title: "", mode: "url", url: "", html: "", height: 480 } }] })}>
+                  <Plus className="size-4" /> {t("storefront.embed.add")}
+                </Button>
                 <div className="pt-3">
                   <GenerateStoreButtons ai={props.aiConfigured} confirm />
                 </div>
@@ -503,6 +506,31 @@ function SectionFields({ s, setProp }: { s: StorefrontSection; setProp: (k: stri
         <>
           {text("title", "title")}
           {text("body", "body", true)}
+        </>
+      );
+    case "embed":
+      return (
+        <>
+          <Notice tone="blue">{t("storefront.embed.note")}</Notice>
+          {text("title", "title")}
+          <Field label={t("storefront.embed.mode")}>
+            <select className="h-10 rounded-xl border border-line bg-white px-3 text-sm" value={String(p.mode ?? "url")} onChange={(e) => setProp("mode", e.target.value)}>
+              <option value="url">{t("storefront.embed.modeUrl")}</option>
+              <option value="html">{t("storefront.embed.modeHtml")}</option>
+            </select>
+          </Field>
+          {p.mode === "html" ? (
+            <Field label={t("storefront.embed.html")} hint={t("storefront.embed.htmlHint")}>
+              <textarea rows={6} maxLength={20000} className="w-full rounded-xl border border-line bg-white p-3 font-mono text-xs" value={String(p.html ?? "")} onChange={(e) => setProp("html", e.target.value)} />
+            </Field>
+          ) : (
+            <Field label={t("storefront.embed.url")} hint={t("storefront.embed.urlHint")}>
+              <input className="h-10 w-full rounded-xl border border-line bg-white px-3 text-sm" inputMode="url" value={String(p.url ?? "")} onChange={(e) => setProp("url", e.target.value)} />
+            </Field>
+          )}
+          <Field label={t("storefront.embed.height")}>
+            <input type="number" min={120} max={1600} className="h-10 w-32 rounded-xl border border-line bg-white px-3 text-sm" value={Number(p.height ?? 480)} onChange={(e) => setProp("height", Number(e.target.value))} />
+          </Field>
         </>
       );
     default:

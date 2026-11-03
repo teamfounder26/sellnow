@@ -417,7 +417,8 @@ export type SectionType =
   | "cta"
   | "catalog"
   | "details"
-  | "contact";
+  | "contact"
+  | "embed";
 
 export type StorefrontSection = {
   id: string;

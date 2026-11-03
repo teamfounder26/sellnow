@@ -1,3 +1,4 @@
+import { SANDBOX_HTML, SANDBOX_URL, embedDocument, safeEmbedUrl } from "@/lib/storefront/embed";
 import { Check, Package, Quote, Info } from "lucide-react";
 import type { StorefrontContent, StorefrontTheme, products as productsTable } from "@/lib/db/schema";
 import { ENGINES } from "@/lib/categories";
@@ -370,6 +371,26 @@ export function StorefrontRenderer(props: RendererProps) {
               );
             case "contact":
               return contactBlock(s.id, String(p.title ?? ""), String(p.body ?? ""), String(p.mode ?? ""));
+            case "embed": {
+              const isHtml = p.mode === "html";
+              const src = isHtml ? null : safeEmbedUrl(String(p.url ?? ""));
+              const html = isHtml ? String(p.html ?? "") : "";
+              if (!src && !html.trim()) return null;
+              const h = Math.min(1600, Math.max(120, Number(p.height) || 480));
+              return (
+                <section key={s.id} className="mx-auto max-w-5xl px-5 py-10">
+                  {p.title ? <h2 className="mb-4 text-2xl font-extrabold tracking-tight">{String(p.title)}</h2> : null}
+                  <iframe
+                    title={String(p.title || "Embedded content")}
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    className="block w-full rounded-2xl border-0 bg-white"
+                    style={{ height: h }}
+                    {...(src ? { src, sandbox: SANDBOX_URL, allow: "fullscreen; encrypted-media; picture-in-picture" } : { srcDoc: embedDocument(html), sandbox: SANDBOX_HTML })}
+                  />
+                </section>
+              );
+            }
             case "cta":
               return (
                 <section key={s.id} className="mx-auto max-w-5xl px-5 py-14 text-center">

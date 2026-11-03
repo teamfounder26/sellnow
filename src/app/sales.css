@@ -1,0 +1,44 @@
+/* SellNow public sales page — motion & device scaling. Transform/opacity only; all motion respects reduced-motion. */
+.sn-screen { container-type: inline-size; }
+.sn-screen-inner { font-size: calc(100cqw / var(--sn-em)); line-height: 1.35; }
+
+@keyframes sn-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+@keyframes sn-float-sm { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes sn-rise { from { opacity: 0; transform: translateY(28px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes sn-rise-rot { from { opacity: 0; transform: translateY(36px) rotate(-6deg); } to { opacity: 1; transform: rotate(-4deg); } }
+@keyframes sn-pulse { 0%, 100% { box-shadow: 0 0 0 0.15em #1F83D8, 0 0.8em 2em rgba(31,131,216,0.18); } 50% { box-shadow: 0 0 0 0.35em rgba(31,131,216,0.35), 0 0.8em 2em rgba(31,131,216,0.25); } }
+@keyframes sn-caret { 50% { opacity: 0; } }
+@keyframes sn-gen { 0%, 30% { opacity: 0; transform: translateY(10px); } 45%, 100% { opacity: 1; transform: none; } }
+@keyframes sn-tap { 0% { transform: scale(0.4); opacity: 0.9; } 100% { transform: scale(1.8); opacity: 0; } }
+@keyframes sn-point { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(-4px, -6px); } }
+@keyframes sn-glow { 0%, 100% { opacity: 0.55; transform: scale(1); } 50% { opacity: 0.8; transform: scale(1.06); } }
+@keyframes sn-reveal { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+@keyframes sn-shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+@keyframes sn-confetti { 0% { transform: translate3d(0, -10vh, 0) rotate(0); opacity: 1; } 100% { transform: translate3d(var(--dx), 70vh, 0) rotate(var(--rot)); opacity: 0; } }
+@keyframes sn-ribbon { 0% { transform: translateY(-20px) scaleY(0.4); opacity: 0; } 30% { opacity: 1; } 100% { transform: translateY(60vh) scaleY(1); opacity: 0; } }
+@keyframes sn-spark { 0% { transform: scale(0); opacity: 1; } 70% { opacity: 1; } 100% { transform: scale(1.6); opacity: 0; } }
+
+.sn-in { animation: sn-rise 0.9s cubic-bezier(.2,.8,.2,1) both; }
+.sn-in-1 { animation-delay: 0.1s; } .sn-in-2 { animation-delay: 0.25s; } .sn-in-3 { animation-delay: 0.4s; }
+.sn-float { animation: sn-float 7s ease-in-out infinite; }
+.sn-float-a { animation: sn-float-sm 6s ease-in-out infinite; transform-box: fill-box; }
+.sn-float-b { animation: sn-float-sm 7.5s ease-in-out 1s infinite; transform-box: fill-box; }
+.sn-pulse { animation: sn-pulse 2.6s ease-in-out infinite; }
+.sn-caret { animation: sn-caret 1s steps(1) infinite; }
+.sn-gen { animation: sn-gen 6s ease-out 1.2s both; }
+.sn-tap { animation: sn-tap 1.4s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+.sn-pointer { animation: sn-point 1.4s ease-in-out infinite; }
+.sn-glow { animation: sn-glow 8s ease-in-out infinite; }
+.sn-reveal { animation: sn-reveal 0.6s cubic-bezier(.2,.8,.2,1) both; }
+.sn-shimmer::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.7), transparent); animation: sn-shimmer 1.4s ease-in-out infinite; }
+
+/* Scroll reveal: content is visible by default; JS adds .sn-js to enable the effect (no CLS, no hidden content without JS). */
+.sn-js [data-reveal] { opacity: 0; transform: translateY(18px); transition: opacity 0.7s ease, transform 0.7s cubic-bezier(.2,.8,.2,1); }
+.sn-js [data-reveal].is-in { opacity: 1; transform: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sn-in, .sn-float, .sn-float-a, .sn-float-b, .sn-pulse, .sn-caret, .sn-gen, .sn-tap, .sn-pointer, .sn-glow, .sn-reveal, .sn-shimmer::after { animation: none !important; }
+  .sn-js [data-reveal] { opacity: 1; transform: none; transition: none; }
+  .sn-confetti-piece, .sn-ribbon, .sn-spark { display: none; }
+  html { scroll-behavior: auto !important; }
+}

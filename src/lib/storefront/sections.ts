@@ -24,6 +24,8 @@ export const SECTION_PROPS: Record<SectionType, z.ZodType> = {
   /** Key facts (duration, date, venue, format…) — only values the seller provided. */
   details: z.object({ title: str(120), items: items(z.object({ label: str(60), value: str(300) }), 10) }),
   contact: z.object({ title: str(120), body: str(400), mode: z.enum(["enquiry", "interest"]).default("enquiry") }),
+  /** Seller embed: allowlisted provider URL, or an HTML snippet isolated in a sandboxed iframe (lib/storefront/embed.ts). */
+  embed: z.object({ title: str(120), mode: z.enum(["url", "html"]).default("url"), url: str(500), html: str(20_000), height: z.number().int().min(120).max(1600).default(480) }),
 };
 
 export const SECTION_TYPES = Object.keys(SECTION_PROPS) as SectionType[];
